@@ -3,6 +3,7 @@
 int main()
 {
 	double preco_refil, qtd_refil, preco_produto, qtd_produto;
+	printf("Use ponto para decimais.\n");
 	printf("Qual quantidade ml/kg do Normal? : ");
 	scanf("%lf", &qtd_produto);
 	printf("\nQual o preco do Normal? : ");
