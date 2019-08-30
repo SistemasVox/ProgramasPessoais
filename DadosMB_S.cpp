@@ -1,5 +1,5 @@
 /* 
- * File:   DadosMB_S.c
+ * File:   DadosMB_S.cpp
  * Author: Marcelo
  *
  * Created on 22 de Outubro de 2016, 18:11
