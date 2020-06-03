@@ -29,7 +29,8 @@ int main() {
     printf("\nPreco do refil, R$: %lf ml.kg/$$.", total_refil);
     printf("\nO refil sai a %.1lf %% mais barato.",
            (((total_produto - total_refil) * 100) / total_produto));
-    double economia = (((total_produto - total_refil) * 100) / total_produto);
-    printf("\nVocê economiza R$ %.2lf.", (total_refil * economia / 100));
+	double economia = ((qtd_refil * total_produto) - (qtd_refil * total_refil) );
+	printf("\nVocê economiza R$ %.2lf.", economia);
+	printf("\nO Refil deveria custar: R$ %.2lf.", qtd_refil * total_produto);
     return 0;
 }
