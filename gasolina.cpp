@@ -3,7 +3,7 @@
 #include <math.h>
 
 int main() {
-	setlocale(LC_ALL, "Portuguese");
+    setlocale(LC_ALL, "Portuguese");
     // Propriedades dos combustíveis
     float teorEtanolGasolina = 0.27; // Porcentagem de etanol na gasolina
     float volumeTotalCombustivel = 48.0; // Volume total de combustível a ser abastecido
