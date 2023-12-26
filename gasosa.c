@@ -2,22 +2,29 @@
 #include <locale.h>
 
 int main() {
+    // Define o locale para Português para exibir corretamente os caracteres acentuados
     setlocale(LC_ALL, "Portuguese");
 
-    const float teorEtanolGasolina = 0.27; // Porcentagem de etanol na gasolina
-    const float precoLitroGasolina = 4.99; // Pre�o por litro de gasolina
-    const float precoLitroEtanol = 3.06;   // Pre�o por litro de etanol
-    const float proporcaoGasolinaPuraDesejada = 0.50; // Propor��o desejada de gasolina pura
-    const float tolerancia = 0.01; // Toler�ncia para a propor��o desejada
+    // Constantes
+    const float teorEtanolGasolina = 0.27; // Define a porcentagem de etanol na gasolina
+    const float precoLitroGasolina = 4.99; // Define o preço por litro de gasolina
+    const float precoLitroEtanol = 3.06;   // Define o preço por litro de etanol
+    const float proporcaoGasolinaPuraDesejada = 0.50; // Define a proporção desejada de gasolina pura no tanque
+    const float tolerancia = 0.01; // Define a tolerância para a proporção desejada
 
+    // Variável para armazenar o valor total que o usuário deseja gastar
     float valorTotalGasto;
-    printf("Insira o valor total que deseja gastar em combust�vel: R$ ");
+    printf("Insira o valor total que deseja gastar em combustível: R$ ");
     scanf("%f", &valorTotalGasto);
 
+    // Inicializa os limites para o cálculo da busca binária
     float limiteInferior = 0;
     float limiteSuperior = valorTotalGasto;
+
+    // Variáveis para armazenar os valores calculados
     float valorParaGasolina, valorParaEtanol, volumeGasolina, volumeEtanol, volumeTotalTanque, proporcaoGasolinaPura;
 
+    // Loop para calcular a proporção ideal de gasolina e etanol
     while (limiteSuperior - limiteInferior > tolerancia) {
         valorParaGasolina = (limiteInferior + limiteSuperior) / 2;
         valorParaEtanol = valorTotalGasto - valorParaGasolina;
@@ -28,6 +35,7 @@ int main() {
         volumeTotalTanque = volumeGasolina + volumeEtanol;
         proporcaoGasolinaPura = (volumeGasolina * (1 - teorEtanolGasolina)) / volumeTotalTanque;
 
+        // Ajusta os limites com base na proporção calculada
         if (proporcaoGasolinaPura < proporcaoGasolinaPuraDesejada) {
             limiteInferior = valorParaGasolina;
         } else {
@@ -35,12 +43,13 @@ int main() {
         }
     }
 
+    // Exibe os resultados
     printf("Valor a ser gasto em gasolina: R$ %.2f\n", valorParaGasolina);
     printf("Volume de gasolina a ser abastecido: %.2f litros\n", volumeGasolina);
     printf("Valor a ser gasto em etanol: R$ %.2f\n", valorParaEtanol);
     printf("Volume de etanol a ser abastecido: %.2f litros\n", volumeEtanol);
     printf("Volume total no tanque: %.2f litros\n", volumeTotalTanque);
-    printf("Propor��o de gasolina pura no tanque: %.2f%%\n", proporcaoGasolinaPura * 100);
+    printf("Proporção de gasolina pura no tanque: %.2f%%\n", proporcaoGasolinaPura * 100);
 
     return 0;
 }
