@@ -1,0 +1,7 @@
+Dism /Online /Cleanup-Image /StartComponentCleanup
+
+Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+irm https://massgrave.dev/get | iex
