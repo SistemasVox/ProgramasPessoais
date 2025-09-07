@@ -1,11 +1,10 @@
 #!/bin/sh
 
 # ========================================
-# Monitor Astro (Sol & Lua) para OpenWrt - VERSÃO FINAL (COM LOG E NOTIFICAÇÃO)
+# Monitor Astro (Sol & Lua) para OpenWrt - VERSÃO FINAL (COM VERIFICAÇÃO DE CONEXÃO)
 # ========================================
 
 # --- Diretório e Arquivo de Log ---
-# Usa $0 que é mais compatível com sh/ash do que BASH_SOURCE
 DIR=$(cd "$(dirname "$0")" && pwd)
 SCRIPT_PREFIX=$(basename "$0" .sh)
 LOG_FILE="$DIR/${SCRIPT_PREFIX}.log"
@@ -13,7 +12,7 @@ LOG_FILE="$DIR/${SCRIPT_PREFIX}.log"
 # --- Configuração ---
 LATITUDE="-18.9113"
 LONGITUDE="-48.2622"
-TIMEZONE_OFFSET_HOURS=3 # Para America/Sao_Paulo (UTC-3)
+TIMEZONE_OFFSET_HOURS=3
 
 # --- APIs ---
 API_URL_SOL="https://api.sunrise-sunset.org/json?lat=${LATITUDE}&lng=${LONGITUDE}&formatted=0&date=today"
@@ -21,22 +20,23 @@ API_URL_LUA="http://v2.wttr.in/Uberlandia?format=j1"
 
 # --- Funções ---
 
-# Função de Log: Escreve no console e no arquivo de log
 log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
 }
 
-# Função de Notificação: Envia a mensagem para os scripts do WhatsApp
 send_notification() {
     local script_name message
     script_name=$(basename "$0")
     message=$(printf "[%s]\n%s" "$script_name" "$1")
-    
     log_message "Enviando notificação via WhatsApp..."
-    # Descomente as linhas abaixo se os scripts de envio existirem
     "$DIR/send_whatsapp.sh" "$message" >/dev/null 2>&1
     "$DIR/send_whatsapp_2.sh" "$message" >/dev/null 2>&1
     log_message "Notificação enviada."
+}
+
+# Função para checar a conexão com a internet
+check_internet_connection() {
+    ping -c 1 -W 2 "1.1.1.1" >/dev/null 2>&1
 }
 
 utc_to_local_manual() {
@@ -94,6 +94,13 @@ format_for_display() {
 
 log_message "=== Monitor Astro Iniciado ==="
 . /usr/share/libubox/jshn.sh
+
+# --- Verificação de Conexão com a Internet ---
+while ! check_internet_connection; do
+    log_message "🔌 Sem conexão com a internet. Tentando novamente em 30 segundos..."
+    sleep 30
+done
+log_message "✅ Conexão com a internet estabelecida."
 
 # --- Processamento Solar ---
 log_message "☀️ Buscando dados solares..."
@@ -185,7 +192,6 @@ fi
 log_message "✅ Cálculo de escuridão finalizado."
 
 # --- Exibir informações e Notificar ---
-# Armazena a mensagem final em uma variável
 MESSAGE_BODY=$(cat << EOF
 
 ☀️ Informações Solares - Uberlândia
@@ -223,11 +229,7 @@ MESSAGE_BODY=$(cat << EOF
 EOF
 )
 
-# Exibe a mensagem no console
 echo "$MESSAGE_BODY"
-
-# Envia a notificação
 send_notification "$MESSAGE_BODY"
-
 log_message "=== Monitor Astro Finalizado ==="
 exit 0
