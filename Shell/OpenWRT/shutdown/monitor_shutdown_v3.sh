@@ -105,7 +105,7 @@ resolve_pending_check() {
     [ ! -f "$PENDING_FILE" ] && return
 
     if check_internet_connection; then
-        log "Conexão restaurada. Resolvendo cálculo pendente"
+        log "Conexão restaurada. Resolvendo cálculo pendente com detalhamento."
         sync_ntp
 
         local last_heartbeat
@@ -114,20 +114,41 @@ resolve_pending_check() {
         now=$(date +%s)
         
         if [[ "$last_heartbeat" =~ ^[0-9]+$ ]]; then
-            local offline_time=$((now - last_heartbeat))
-            local duration
-            duration=$(printf "%02d:%02d:%02d" $((offline_time / 3600)) $(((offline_time % 3600) / 60)) $((offline_time % 60)))
+
+            # 1. Obter o uptime em segundos a partir do sistema
+            local uptime_seconds
+            uptime_seconds=$(printf "%.0f" "$(cut -d' ' -f1 /proc/uptime)")
+
+            # 2. Calcular o tempo exato em que o roteador ligou (boot)
+            local boot_time=$((now - uptime_seconds))
+
+            # 3. Calcular a duração em que ficou efetivamente DESLIGADO
+            local powered_off_duration=$((boot_time - last_heartbeat))
+            # Garante que não seja um número negativo por pequenas variações de tempo
+            [ "$powered_off_duration" -lt 0 ] && powered_off_duration=0
+
+            # 4. Calcular a duração TOTAL da interrupção (opcional, mas útil)
+            local total_duration=$((now - last_heartbeat))
+
+            # Formata as durações para um formato legível (HH:MM:SS)
+            local duration_total_human=$(printf "%02d:%02d:%02d" $((total_duration / 3600)) $(((total_duration % 3600) / 60)) $((total_duration % 60)))
+            local duration_off_human=$(printf "%02d:%02d:%02d" $((powered_off_duration / 3600)) $(((powered_off_duration % 3600) / 60)) $((powered_off_duration % 60)))
+            local duration_wait_human=$(printf "%02d:%02d:%02d" $((uptime_seconds / 3600)) $(((uptime_seconds % 3600) / 60)) $((uptime_seconds % 60)))
+
             local last_seen
-            last_seen=$(date -d "@$last_heartbeat" '+%d/%m/%Y %H:%M:%S' 2>/dev/null || echo "N/A")
+            last_seen=$(date -d "@$last_heartbeat" '+%d/%m/%Y %H:%M:%S')
             local restart_time
             restart_time=$(date -d "@$now" '+%d/%m/%Y %H:%M:%S')
 
-            send_notification "⚡ REINÍCIO RESOLVIDO
-⏱️ Duração: $duration
+            # Envia uma notificação muito mais detalhada
+            send_notification "⚡ REINÍCIO DETALHADO
+⏱️ Total Interrupção: $duration_total_human
+🔌 Tempo Desligado: $duration_off_human
+⏳ Ligado/Aguardando: $duration_wait_human
 💡 Parou: $last_seen
 ✅ Voltou: $restart_time"
-            log "Reinício resolvido: $duration (${offline_time}s)"
-            log_to_csv "$offline_time" "$last_seen" "$restart_time" "$duration" "delayed_restart_calc"
+            
+            log "Reinício detalhado: Total=${total_duration}s, Desligado=${powered_off_duration}s, Aguardando=${uptime_seconds}s"
         else
             log "ERRO: Timestamp inválido no arquivo pendente"
         fi
