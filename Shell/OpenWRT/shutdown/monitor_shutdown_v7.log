@@ -1,0 +1,10 @@
+2025-09-22 23:26:02 [WARN] Comando opcional ausente: ntpclient
+2025-09-22 23:26:02 [INFO] Verificação de saúde: OK
+2025-09-22 23:26:02 [INFO] Arquivo de configuração criado: /home/runner/work/ProgramasPessoais/ProgramasPessoais/Shell/OpenWRT/shutdown/monitor_shutdown_v7.conf
+2025-09-22 23:26:02 [INFO] === MONITOR DE ENERGIA v7 INICIADO ===
+2025-09-22 23:26:02 [INFO] PID: 3446, Configuração: /home/runner/work/ProgramasPessoais/ProgramasPessoais/Shell/OpenWRT/shutdown/monitor_shutdown_v7.conf
+2025-09-22 23:26:02 [INFO] Recursos: 8 servidores NTP, 10 alvos de ping
+2025-09-22 23:26:02 [INFO] Iniciando loop principal (PID: 3446)
+2025-09-22 23:26:02 [INFO] Inicializando monitor (PID: 3446)
+2025-09-22 23:26:02 [DEBUG] Script de notificação não encontrado ou não executável
+2025-09-22 23:28:08 [INFO] Monitor encerrado (PID: 3446)
