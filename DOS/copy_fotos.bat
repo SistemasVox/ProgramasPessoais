@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 
 :: =============================================================================
 :: Script para copiar fotos aleatoriamente - Versão Otimizada para Grandes Volumes
-:: Versao: 2.1 - Otimizada para performance
+:: Versao: 2.2 - Aleatoriedade eficiente, sem backup de destino
 :: =============================================================================
 
 :: ===== CONFIGURAÇÕES =====
@@ -13,13 +13,13 @@ set "DEST_DIR=Wallpapers_temp"
 set "NUM_PHOTOS=240"
 
 :: Extensoes de imagem suportadas
-set "IMG_EXTENSIONS=jpg jpeg png gif bmp tiff webp raw cr2 nef dng"
+set "IMG_EXTENSIONS=jpg jpeg"
 
 :: ===== INÍCIO DO PROGRAMA =====
 cls
 echo.
 echo ===============================================================================
-echo              SCRIPT PARA COPIA ALEATORIA DE FOTOS - v2.1 OTIMIZADO
+echo          SCRIPT PARA COPIA ALEATORIA DE FOTOS - v2.2 ALEATORIEDADE EFICIENTE
 echo ===============================================================================
 echo.
 
@@ -61,43 +61,40 @@ if not exist "%SOURCE_DIR%" (
 echo [INFO] Criando lista de arquivos... (pode demorar com muitos arquivos)
 set "temp_list=%TEMP%\photo_list_%RANDOM%.txt"
 
-:: Usar comando DIR para criar lista rapidamente
 (
 for %%e in (%IMG_EXTENSIONS%) do (
     dir "%SOURCE_DIR%\*.%%e" /b /a-d 2>nul
 )
 ) > "%temp_list%"
 
-:: Contar linhas no arquivo (mais rapido que loops)
-set count=0
-for /f %%i in ('type "%temp_list%" ^| find /c /v ""') do set count=%%i
+:: Carregar arquivos em array file[]
+set i=0
+for /f "delims=" %%a in (%temp_list%) do (
+    set /a i+=1
+    set "file[!i!]=%%a"
+)
+set total=!i!
 
-echo [INFO] Total de arquivos encontrados: !count!
+echo [INFO] Total de arquivos encontrados: !total!
 
 :: Verificar se ha arquivos
-if !count! equ 0 (
+if !total! equ 0 (
     echo [ERRO] Nenhum arquivo de imagem encontrado!
     del "%temp_list%" 2>nul
     pause
     exit /b 1
 )
 
-if !count! lss %NUM_PHOTOS% (
-    echo [AVISO] Apenas !count! arquivos disponiveis. Copiando todos.
-    set NUM_PHOTOS=!count!
+if !total! lss %NUM_PHOTOS% (
+    echo [AVISO] Apenas !total! arquivos disponiveis. Copiando todos.
+    set NUM_PHOTOS=!total!
 )
 
-:: Preparar pasta destino
+:: Preparar pasta destino (limpa, sem backup)
 echo [INFO] Preparando pasta destino...
 if exist "%DEST_DIR%" (
-    set "backup_dir=%DEST_DIR%_backup_%date:~-4%%date:~3,2%%date:~0,2%_%time:~0,2%%time:~3,2%"
-    set "backup_dir=!backup_dir: =0!"
-    ren "%DEST_DIR%" "!backup_dir!" 2>nul
-    if errorlevel 1 (
-        rmdir /s /q "%DEST_DIR%" 2>nul
-    )
+    rmdir /s /q "%DEST_DIR%" 2>nul
 )
-
 mkdir "%DEST_DIR%" 2>nul
 if errorlevel 1 (
     echo [ERRO] Nao foi possivel criar pasta destino
@@ -112,63 +109,53 @@ set "LOGFILE=!LOGFILE: =0!"
 
 (
 echo Log da Operacao - %date% %time%
-echo Origem: %SOURCE_DIR% ^(!count! arquivos^)
+echo Origem: %SOURCE_DIR% ^(!total! arquivos^)
 echo Destino: %DEST_DIR%
-echo Solicitados: !NUM_PHOTOS!
+echo Solicitados: %NUM_PHOTOS%
 echo.
 ) > "!LOGFILE!"
 
-:: ALGORITMO OTIMIZADO - Embaralhar lista primeiro
-echo [INFO] Embaralhando lista de arquivos...
-set "shuffled_list=%TEMP%\shuffled_%RANDOM%.txt"
+:: ======= SELECIONAR ARQUIVOS ALEATORIOS UNICOS =========
+set "selected="
+set count=0
 
-:: Criar arquivo temporario embaralhado usando SORT RANDOM
-sort "%temp_list%" /R > "%shuffled_list%" 2>nul
-
-:: Se SORT /R nao funcionar, usar metodo alternativo
-if not exist "%shuffled_list%" (
-    echo [INFO] Usando metodo alternativo de embaralhamento...
-    copy "%temp_list%" "%shuffled_list%" >nul
+:select_random
+if !count! geq %NUM_PHOTOS% goto proceed_copy
+set /a idx=(%RANDOM% %% !total!) + 1
+echo !selected! | find " !idx! " >nul
+if errorlevel 1 (
+    set "selected=!selected! !idx! "
+    set /a count+=1
 )
+goto select_random
 
-:: Copiar os primeiros N arquivos da lista embaralhada
-echo [INFO] Iniciando copia otimizada...
+:proceed_copy
+echo [INFO] Iniciando copia aleatoria otimizada...
 echo.
 
 set copied=0
 set errors=0
 set start_time=%time%
-set "progress_file=%TEMP%\progress_%RANDOM%.txt"
 
-:: Ler linha por linha e copiar
-for /f "usebackq tokens=*" %%f in ("%shuffled_list%") do (
-    if !copied! lss !NUM_PHOTOS! (
-        set "filename=%%f"
-        
-        :: Verificar se arquivo existe
-        if exist "%SOURCE_DIR%\!filename!" (
-            :: Copiar arquivo
-            copy "%SOURCE_DIR%\!filename!" "%DEST_DIR%\" >nul 2>nul
-            if errorlevel 1 (
-                echo [ERRO] !filename!
-                echo !filename! - ERRO >> "!LOGFILE!"
-                set /a errors+=1
-            ) else (
-                set /a copied+=1
-                echo !filename! >> "!LOGFILE!"
-                
-                :: Mostrar progresso a cada 10 arquivos
-                set /a remainder=!copied! %% 10
-                if !remainder! equ 0 (
-                    set /a percent=!copied!*100/!NUM_PHOTOS!
-                    echo [!percent!%%] !copied!/!NUM_PHOTOS! - !filename!
-                )
-                
-                :: Barra de progresso a cada 25 arquivos
-                set /a bar_check=!copied! %% 25
-                if !bar_check! equ 0 (
-                    call :show_progress_simple !copied! !NUM_PHOTOS!
-                )
+for %%j in (!selected!) do (
+    set "filename=!file[%%j]!"
+    if exist "%SOURCE_DIR%\!filename!" (
+        copy "%SOURCE_DIR%\!filename!" "%DEST_DIR%\" >nul 2>nul
+        if errorlevel 1 (
+            echo [ERRO] !filename!
+            echo !filename! - ERRO >> "!LOGFILE!"
+            set /a errors+=1
+        ) else (
+            set /a copied+=1
+            echo !filename! >> "!LOGFILE!"
+            set /a remainder=!copied! %% 10
+            if !remainder! equ 0 (
+                set /a percent=!copied!*100/%NUM_PHOTOS%
+                echo [!percent!%%] !copied!/!NUM_PHOTOS! - !filename!
+            )
+            set /a bar_check=!copied! %% 25
+            if !bar_check! equ 0 (
+                call :show_progress_simple !copied! %NUM_PHOTOS%
             )
         )
     )
@@ -176,13 +163,11 @@ for /f "usebackq tokens=*" %%f in ("%shuffled_list%") do (
 
 :: Limpeza de arquivos temporarios
 del "%temp_list%" 2>nul
-del "%shuffled_list%" 2>nul
-del "%progress_file%" 2>nul
 
 set end_time=%time%
 
 :: Barra final
-call :show_progress_simple !copied! !NUM_PHOTOS!
+call :show_progress_simple !copied! %NUM_PHOTOS%
 
 :: Verificacao de integridade rapida
 echo.
@@ -200,8 +185,8 @@ echo                            OPERACAO CONCLUIDA
 echo ===============================================================================
 echo.
 echo Status: CONCLUIDA
-echo Arquivos na origem: !count!
-echo Arquivos copiados: !copied!/!NUM_PHOTOS!
+echo Arquivos na origem: !total!
+echo Arquivos copiados: !copied!/%NUM_PHOTOS%
 echo Erros: !errors!
 echo Verificacao: !copied_count! arquivos no destino
 echo Inicio: !start_time!
@@ -215,7 +200,7 @@ if !copied_count! neq !copied! (
 
 :: Salvar estatisticas
 echo. >> "!LOGFILE!"
-echo RESULTADO: !copied!/!NUM_PHOTOS! copiados, !errors! erros >> "!LOGFILE!"
+echo RESULTADO: !copied!/%NUM_PHOTOS% copiados, !errors! erros >> "!LOGFILE!"
 echo VERIFICACAO: !copied_count! arquivos no destino >> "!LOGFILE!"
 echo HORARIO: !start_time! ate !end_time! >> "!LOGFILE!"
 
