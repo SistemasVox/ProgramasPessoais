@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # ========================================
-# Monitor Astro (Sol & Lua) para OpenWrt - VERSÃO FINAL CONSOLIDADA
+# Monitor Astro (Sol & Lua) para OpenWrt - Lógica Fiel de Escuridão/Luz Lunar
 # ========================================
 
 # --- Diretório e Arquivo de Log ---
@@ -15,7 +15,7 @@ LONGITUDE="-48.2622"
 TIMEZONE_OFFSET_HOURS=-3  # Fuso horário de Brasília (BRT)
 
 # --- APIs ---
-API_URL_SOL="https://api.sunrise-sunset.org/json?lat=${LATITUDE}&lng=${LONGITUDE}&formatted=0&date=" # A data será 'today' ou 'tomorrow'
+API_URL_SOL="https://api.sunrise-sunset.org/json?lat=${LATITUDE}&lng=${LONGITUDE}&formatted=0&date="
 API_URL_LUA="http://v2.wttr.in/Uberlandia?format=j1"
 
 # --- Constantes ---
@@ -28,7 +28,7 @@ CURL_TIMEOUT_SOL=10
 CURL_TIMEOUT_LUA=15
 RETRY_DELAY=30
 CALCULATION_DELAY=2
-MAX_LUA_RETRIES=5 # <<< ÚNICA LINHA ADICIONADA AQUI
+MAX_LUA_RETRIES=5
 
 # --- Funções ---
 
@@ -42,8 +42,8 @@ send_notification() {
     message=$(printf "[%s]\n%s" "$script_name" "$1")
     log_message "Enviando notificação via WhatsApp..."
     # Descomente as linhas abaixo para ativar o envio de notificações
-    # "$DIR/send_whatsapp.sh" "$message" >/dev/null 2>&1
-    # "$DIR/send_whatsapp_2.sh" "$message" >/dev/null 2>&1
+    "$DIR/send_whatsapp.sh" "$message" >/dev/null 2>&1
+    "$DIR/send_whatsapp_2.sh" "$message" >/dev/null 2>&1
     log_message "Notificação enviada."
 }
 
@@ -93,7 +93,9 @@ time_to_seconds() {
     [ -z "$time_24h" ] && echo "0" && return
     local h=$(echo "$time_24h" | cut -d: -f1 | sed 's/^0*//')
     local m=$(echo "$time_24h" | cut -d: -f2 | sed 's/^0*//')
-    echo $(( (h * SECONDS_PER_HOUR) + (m * SECONDS_PER_MINUTE) ))
+    local s=$(echo "$time_24h" | cut -d: -f3 | sed 's/^0*//')
+    [ -z "$s" ] && s=0
+    echo $(( (h * SECONDS_PER_HOUR) + (m * SECONDS_PER_MINUTE) + s ))
 }
 
 format_duration() {
@@ -169,34 +171,32 @@ CURRENT_DATE=$(date '+%B %d, %Y')
 CURRENT_TIME=$(date '+%I:%M:%S %p')
 log_message "✅ Dados solares processados."
 
-# --- Processamento Lunar (INÍCIO DA SEÇÃO MODIFICADA) ---
+# --- Processamento Lunar (LÓGICA DE RETENTATIVA CORRIGIDA) ---
 log_message "🌙 Buscando dados lunares..."
 LUA_RETRY_COUNT=0
-json_lua_raw=""
+moon_phase=""
 
-while [ -z "$json_lua_raw" ] && [ "$LUA_RETRY_COUNT" -lt "$MAX_LUA_RETRIES" ]; do
+while [ -z "$moon_phase" ] && [ "$LUA_RETRY_COUNT" -lt "$MAX_LUA_RETRIES" ]; do
     LUA_RETRY_COUNT=$((LUA_RETRY_COUNT + 1))
     if [ "$LUA_RETRY_COUNT" -gt 1 ]; then
-        log_message " Tentativa ${LUA_RETRY_COUNT}/${MAX_LUA_RETRIES} para a API da Lua após falha. Aguardando $RETRY_DELAY segundos..."
+        log_message " Tentativa ${LUA_RETRY_COUNT}/${MAX_LUA_RETRIES} para a API da Lua. Resposta anterior inválida ou falha no download. Aguardando $RETRY_DELAY segundos..."
         sleep $RETRY_DELAY
     fi
+
     json_lua_raw=$(curl -s -m $CURL_TIMEOUT_LUA "$API_URL_LUA")
+
+    if [ -n "$json_lua_raw" ]; then
+        json_load "$json_lua_raw"
+        json_select weather; json_select 1; json_select astronomy; json_select 1
+        json_get_vars moon_phase moon_illumination moonrise moonset
+        json_select ..; json_select ..; json_select ..; json_select ..
+    fi
 done
 
-if [ -z "$json_lua_raw" ]; then
-    log_message "❌ ERRO: Falha ao obter dados da API da Lua após $MAX_LUA_RETRIES tentativas."
-    send_notification "Erro ao obter dados lunares após $MAX_LUA_RETRIES tentativas. O script será encerrado."
-    exit 1
-fi
-
-json_load "$json_lua_raw"
-json_select weather; json_select 1; json_select astronomy; json_select 1
-json_get_vars moon_phase moon_illumination moonrise moonset
-json_select ..; json_select ..; json_select ..; json_select ..
-
 if [ -z "$moon_phase" ]; then
-    log_message "❌ ERRO: Não foi possível extrair dados lunares do JSON. A resposta da API pode estar malformada."
-    send_notification "Erro ao extrair dados lunares do JSON. O script será encerrado."
+    log_message "❌ ERRO: Falha ao obter e processar dados da API da Lua após $MAX_LUA_RETRIES tentativas."
+    log_message " A resposta da API pode estar malformada ou o serviço indisponível."
+    send_notification "Erro crítico ao obter dados lunares após $MAX_LUA_RETRIES tentativas. O script será encerrado."
     exit 1
 fi
 
@@ -212,77 +212,60 @@ case "$moon_phase" in
     *)                   MOON_PHASE="🌙 $moon_phase" ;;
 esac
 log_message "✅ Dados lunares processados."
-# --- Processamento Lunar (FIM DA SEÇÃO MODIFICADA) ---
 
-# --- Lógica de Escuridão (Baseada em Janelas de Tempo) ---
-log_message "⏳ Calculando tempo de escuridão..."
+# --- Lógica fiel de escuridão e luz lunar ---
+log_message "⏳ Calculando tempo de escuridão e luz lunar..."
 sleep $CALCULATION_DELAY
 
 DARKNESS_INFO="Dados insuficientes para cálculo."
-json_sol_tomorrow_raw=$(curl -s -m $CURL_TIMEOUT_SOL "${API_URL_SOL}tomorrow")
+LUNAR_LIGHT_INFO="Dados insuficientes para cálculo."
 
-if echo "$json_sol_tomorrow_raw" | grep -q '"status":"OK"'; then
-    json_load "$json_sol_tomorrow_raw"
-    json_select results
-    json_get_var civil_twilight_begin_tomorrow civil_twilight_begin
-    json_select ..
-    
-    # --- CONVERSÃO PARA SEGUNDOS ABSOLUTOS ---
-    tomorrow_utc=$(echo "$civil_twilight_begin_tomorrow" | sed 's/T/ /; s/+00:00//')
-    tomorrow_local=$(utc_to_local_manual "$tomorrow_utc")
-    first_light_tomorrow_24h=$(date -d "$tomorrow_local" "+%H:%M")
-
-    night_start_sec=$(time_to_seconds "$(convert_to_24h "$LAST_LIGHT")")
-    first_light_tomorrow_relative_sec=$(time_to_seconds "$first_light_tomorrow_24h")
-    night_end_sec=$((first_light_tomorrow_relative_sec + SECONDS_PER_DAY))
-
-    moonrise_relative_sec=$(time_to_seconds "$(convert_to_24h "$moonrise")")
-    moonset_relative_sec=$(time_to_seconds "$(convert_to_24h "$moonset")")
-    moonrise_abs_sec=$moonrise_relative_sec
-    
-    if [ "$moonset_relative_sec" -lt "$moonrise_relative_sec" ]; then
-        moonset_abs_sec=$((moonset_relative_sec + SECONDS_PER_DAY))
+if [ -n "$LAST_LIGHT" ] && [ -n "$FIRST_LIGHT" ] && [ -n "$moonrise" ] && [ -n "$moonset" ]; then
+    last_light_sec=$(time_to_seconds "$(convert_to_24h "$LAST_LIGHT")")
+    first_light_sec=$(time_to_seconds "$(convert_to_24h "$FIRST_LIGHT")")
+    if [ "$first_light_sec" -le "$last_light_sec" ]; then
+        night_end=$((first_light_sec + SECONDS_PER_DAY))
     else
-        moonset_abs_sec=$moonset_relative_sec
+        night_end=$first_light_sec
     fi
+    night_start=$last_light_sec
 
-    # --- CÁLCULO DAS JANELAS DE ESCURIDÃO ---
-    total_darkness_seconds=0
-    darkness_details=""
+    moonrise_sec=$(time_to_seconds "$(convert_to_24h "$moonrise")")
+    moonset_sec=$(time_to_seconds "$(convert_to_24h "$moonset")")
+    [ "$moonset_sec" -le "$moonrise_sec" ] && moonset_sec=$((moonset_sec + SECONDS_PER_DAY))
 
-    # 1. Janela da NOITE (entre crepúsculo e nascer da lua)
-    evening_darkness_end_sec=$moonrise_abs_sec
-    [ "$evening_darkness_end_sec" -gt "$night_end_sec" ] && evening_darkness_end_sec=$night_end_sec
+    # Inicializa resultados padrão
+    LUNAR_LIGHT_INFO="Total: 0h 0min\n• Sem luz lunar significativa"
+    DARKNESS_INFO="Total: $(format_duration $((night_end-night_start)))\n• $(format_seconds_to_ampm $((night_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((night_end % SECONDS_PER_DAY))): $(format_duration $((night_end-night_start)))"
 
-    if [ "$evening_darkness_end_sec" -gt "$night_start_sec" ]; then
-        duration=$((evening_darkness_end_sec - night_start_sec))
-        total_darkness_seconds=$((total_darkness_seconds + duration))
-        darkness_details="${darkness_details}• ${LAST_LIGHT} às ${moonrise}: $(format_duration $duration)\n"
+    # Caso: lua já está no céu ao anoitecer e se põe durante a noite (caso clássico)
+    if [ "$moonrise_sec" -le "$night_start" ] && [ "$moonset_sec" -gt "$night_start" ] && [ "$moonset_sec" -le "$night_end" ]; then
+        lunar_start=$night_start
+        lunar_end=$moonset_sec
+        darkness_start=$lunar_end
+        darkness_end=$night_end
+        lunar_light_seconds=$((lunar_end - lunar_start))
+        darkness_seconds=$((darkness_end - darkness_start))
+        LUNAR_LIGHT_INFO="Total: $(format_duration $lunar_light_seconds)\n• $(format_seconds_to_ampm $((lunar_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((lunar_end % SECONDS_PER_DAY))): $(format_duration $lunar_light_seconds)"
+        DARKNESS_INFO="Total: $(format_duration $darkness_seconds)\n• $(format_seconds_to_ampm $((darkness_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness_end % SECONDS_PER_DAY))): $(format_duration $darkness_seconds)"
+    # Caso: lua nasce durante a noite e se põe durante a noite (dois intervalos de escuridão)
+    elif [ "$moonrise_sec" -gt "$night_start" ] && [ "$moonrise_sec" -lt "$night_end" ] && [ "$moonset_sec" -gt "$moonrise_sec" ] && [ "$moonset_sec" -le "$night_end" ]; then
+        lunar_start=$moonrise_sec
+        lunar_end=$moonset_sec
+        darkness1_start=$night_start
+        darkness1_end=$lunar_start
+        darkness2_start=$lunar_end
+        darkness2_end=$night_end
+        lunar_light_seconds=$((lunar_end - lunar_start))
+        darkness1_seconds=$((darkness1_end - darkness1_start))
+        darkness2_seconds=$((darkness2_end - darkness2_start))
+        total_darkness_seconds=$((darkness1_seconds + darkness2_seconds))
+        LUNAR_LIGHT_INFO="Total: $(format_duration $lunar_light_seconds)\n• $(format_seconds_to_ampm $((lunar_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((lunar_end % SECONDS_PER_DAY))): $(format_duration $lunar_light_seconds)"
+        DARKNESS_INFO="Total: $(format_duration $total_darkness_seconds)\n• $(format_seconds_to_ampm $((darkness1_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness1_end % SECONDS_PER_DAY))): $(format_duration $darkness1_seconds)\n• $(format_seconds_to_ampm $((darkness2_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness2_end % SECONDS_PER_DAY))): $(format_duration $darkness2_seconds)"
     fi
-
-    # 2. Janela da MANHÃ (entre pôr da lua e crepúsculo)
-    morning_darkness_start_sec=$moonset_abs_sec
-    [ "$morning_darkness_start_sec" -lt "$night_start_sec" ] && morning_darkness_start_sec=$night_start_sec
-    
-    if [ "$night_end_sec" -gt "$morning_darkness_start_sec" ]; then
-        duration=$((night_end_sec - morning_darkness_start_sec))
-        total_darkness_seconds=$((total_darkness_seconds + duration))
-        end_time_str="$(format_seconds_to_ampm $first_light_tomorrow_relative_sec)"
-        darkness_details="${darkness_details}• ${moonset} às ${end_time_str}: $(format_duration $duration)\n"
-    fi
-
-    # 3. Formatação da saída final
-    total_duration_str=$(format_duration $total_darkness_seconds)
-    if [ "$total_darkness_seconds" -gt 0 ]; then
-        darkness_details=$(echo -e "$darkness_details" | sed '/^$/d' | sed '$ s/.$//')
-        DARKNESS_INFO="Total: ${total_duration_str}\n${darkness_details}"
-    else
-        DARKNESS_INFO="Total: 0h 0min\n• Sem escuridão significativa"
-    fi
-else
-    log_message "⚠️ AVISO: Falha ao obter dados solares para amanhã."
 fi
-log_message "✅ Cálculo de escuridão finalizado."
+
+log_message "✅ Cálculo de escuridão e luz lunar finalizado."
 
 # --- Exibir informações e Notificar ---
 MESSAGE_BODY=$(cat << EOF
@@ -315,6 +298,10 @@ MESSAGE_BODY=$(cat << EOF
 🌃 TEMPO DE ESCURIDÃO:
 $(echo -e "${DARKNESS_INFO}")
   (Intervalos sem luz solar ou lunar)
+
+🌙 TEMPO DE LUZ LUNAR:
+$(echo -e "${LUNAR_LIGHT_INFO}")
+  (Intervalos noturnos com luz da lua)
 
 ───────────────────
 📊 Fontes: sunrise-sunset.org, v2.wttr.in
