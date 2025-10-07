@@ -97,7 +97,6 @@ sunrise_sec=$(time_to_seconds "$(convert_to_24h "$sunrise")")
 sunset_sec=$(time_to_seconds "$(convert_to_24h "$sunset")")
 sunrise_tomorrow_sec=$(( $(time_to_seconds "$(convert_to_24h "$sunrise_tomorrow")") + SECONDS_PER_DAY ))
 moonrise_sec=$(time_to_seconds "$(convert_to_24h "$moonrise")")
-moonset_sec=0
 
 # Duração do dia e da noite
 day_duration_seconds=$((sunset_sec - sunrise_sec))
@@ -105,42 +104,46 @@ night_duration_seconds=$((SECONDS_PER_DAY - day_duration_seconds))
 DAY_DURATION=$(format_duration $day_duration_seconds)
 NIGHT_DURATION=$(format_duration $night_duration_seconds)
 
-# Tratamento "No moonset"
+# --- Cálculo fiel da luz lunar e escuridão ---
+LUNAR_LIGHT_INFO="Total: 0h 0min\n• Sem luz lunar significativa"
+DARKNESS_INFO="Dados insuficientes para cálculo."
+
+# Intervalo noturno
+night_start=$sunset_sec
+night_end=$sunrise_tomorrow_sec
+
+# Intervalo lunar
+moonset_sec=0
 if [ "$moonset" = "No moonset" ] && [ -n "$moonset_tomorrow" ] && [ "$moonset_tomorrow" != "No moonset" ]; then
-    moonset="$moonset_tomorrow"
     moonset_sec=$(( $(time_to_seconds "$(convert_to_24h "$moonset_tomorrow")") + SECONDS_PER_DAY ))
 else
     moonset_sec=$(time_to_seconds "$(convert_to_24h "$moonset")")
     [ "$moonset_sec" -le "$moonrise_sec" ] && moonset_sec=$((moonset_sec + SECONDS_PER_DAY))
 fi
 
-LUNAR_LIGHT_INFO="Total: 0h 0min\n• Sem luz lunar significativa"
-DARKNESS_INFO="Total: $(format_duration $((sunrise_tomorrow_sec-sunset_sec)))\n• $(format_seconds_to_ampm $((sunset_sec % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((sunrise_tomorrow_sec % SECONDS_PER_DAY))): $(format_duration $((sunrise_tomorrow_sec-sunset_sec)))"
+# Interseção dos intervalos [noite] ∩ [lua acima do horizonte]
+lunar_light_start=$((moonrise_sec > night_start ? moonrise_sec : night_start))
+lunar_light_end=$((moonset_sec < night_end ? moonset_sec : night_end))
 
-if [ -n "$moonrise" ] && [ -n "$moonset" ] && [ "$moonset" != "No moonset" ] && [ "$moonset_sec" -gt 0 ]; then
-    if [ "$moonrise_sec" -le "$sunset_sec" ] && [ "$moonset_sec" -gt "$sunset_sec" ] && [ "$moonset_sec" -le "$sunrise_tomorrow_sec" ]; then
-        lunar_start=$sunset_sec
-        lunar_end=$moonset_sec
-        darkness_start=$lunar_end
-        darkness_end=$sunrise_tomorrow_sec
-        lunar_light_seconds=$((lunar_end - lunar_start))
-        darkness_seconds=$((darkness_end - darkness_start))
-        LUNAR_LIGHT_INFO="Total: $(format_duration $lunar_light_seconds)\n• $(format_seconds_to_ampm $((lunar_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((lunar_end % SECONDS_PER_DAY))): $(format_duration $lunar_light_seconds)"
-        DARKNESS_INFO="Total: $(format_duration $darkness_seconds)\n• $(format_seconds_to_ampm $((darkness_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness_end % SECONDS_PER_DAY))): $(format_duration $darkness_seconds)"
-    elif [ "$moonrise_sec" -gt "$sunset_sec" ] && [ "$moonrise_sec" -lt "$sunrise_tomorrow_sec" ] && [ "$moonset_sec" -gt "$moonrise_sec" ] && [ "$moonset_sec" -le "$sunrise_tomorrow_sec" ]; then
-        lunar_start=$moonrise_sec
-        lunar_end=$moonset_sec
-        darkness1_start=$sunset_sec
-        darkness1_end=$lunar_start
-        darkness2_start=$lunar_end
-        darkness2_end=$sunrise_tomorrow_sec
-        lunar_light_seconds=$((lunar_end - lunar_start))
-        darkness1_seconds=$((darkness1_end - darkness1_start))
-        darkness2_seconds=$((darkness2_end - darkness2_start))
-        total_darkness_seconds=$((darkness1_seconds + darkness2_seconds))
-        LUNAR_LIGHT_INFO="Total: $(format_duration $lunar_light_seconds)\n• $(format_seconds_to_ampm $((lunar_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((lunar_end % SECONDS_PER_DAY))): $(format_duration $lunar_light_seconds)"
-        DARKNESS_INFO="Total: $(format_duration $total_darkness_seconds)\n• $(format_seconds_to_ampm $((darkness1_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness1_end % SECONDS_PER_DAY))): $(format_duration $darkness1_seconds)\n• $(format_seconds_to_ampm $((darkness2_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness2_end % SECONDS_PER_DAY))): $(format_duration $darkness2_seconds)"
-    fi
+if [ "$lunar_light_end" -gt "$lunar_light_start" ]; then
+    lunar_light_seconds=$((lunar_light_end - lunar_light_start))
+    LUNAR_LIGHT_INFO="Total: $(format_duration $lunar_light_seconds)\n• $(format_seconds_to_ampm $((lunar_light_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((lunar_light_end % SECONDS_PER_DAY))): $(format_duration $lunar_light_seconds)"
+    # Escuridão antes e depois da luz lunar
+    darkness1_start=$night_start
+    darkness1_end=$lunar_light_start
+    darkness2_start=$lunar_light_end
+    darkness2_end=$night_end
+    darkness1_seconds=$((darkness1_end - darkness1_start))
+    darkness2_seconds=$((darkness2_end - darkness2_start))
+    total_darkness_seconds=$(( (darkness1_seconds > 0 ? darkness1_seconds : 0) + (darkness2_seconds > 0 ? darkness2_seconds : 0) ))
+    DARKNESS_INFO="Total: $(format_duration $total_darkness_seconds)"
+    [ "$darkness1_seconds" -gt 0 ] && DARKNESS_INFO="${DARKNESS_INFO}\n• $(format_seconds_to_ampm $((darkness1_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness1_end % SECONDS_PER_DAY))): $(format_duration $darkness1_seconds)"
+    [ "$darkness2_seconds" -gt 0 ] && DARKNESS_INFO="${DARKNESS_INFO}\n• $(format_seconds_to_ampm $((darkness2_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness2_end % SECONDS_PER_DAY))): $(format_duration $darkness2_seconds)"
+else
+    # Toda a noite é escura
+    darkness_seconds=$((night_end - night_start))
+    DARKNESS_INFO="Total: $(format_duration $darkness_seconds)\n• $(format_seconds_to_ampm $((night_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((night_end % SECONDS_PER_DAY))): $(format_duration $darkness_seconds)"
+    LUNAR_LIGHT_INFO="Total: 0h 0min\n• Sem luz lunar significativa"
 fi
 
 case "$moon_phase" in
