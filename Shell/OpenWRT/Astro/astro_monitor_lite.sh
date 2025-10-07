@@ -9,64 +9,64 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 SCRIPT_PREFIX=$(basename "$0" .sh)
 LOG_FILE="$DIR/${SCRIPT_PREFIX}.log"
 
-CITY="Uberlandia"
-API_URL="http://v2.wttr.in/${CITY}?format=j1"
+CIDADE="Uberlandia"
+API_URL="http://v2.wttr.in/${CIDADE}?format=j1"
 
-SECONDS_PER_HOUR=3600
-SECONDS_PER_MINUTE=60
-HOURS_PER_DAY=24
-SECONDS_PER_DAY=$((HOURS_PER_DAY * SECONDS_PER_HOUR))
+SEGUNDOS_POR_HORA=3600
+SEGUNDOS_POR_MINUTO=60
+HORAS_POR_DIA=24
+SEGUNDOS_POR_DIA=$((HORAS_POR_DIA * SEGUNDOS_POR_HORA))
 
 log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
 }
 
-convert_to_24h() {
-    local time_str="$1"
-    [ -z "$time_str" ] && echo "00:00" && return
-    local time_part=$(echo "$time_str" | cut -d' ' -f1)
-    local ampm=$(echo "$time_str" | cut -d' ' -f2)
-    local hour=$(echo "$time_part" | cut -d: -f1 | sed 's/^0*//')
-    local min=$(echo "$time_part" | cut -d: -f2 | sed 's/^0*//')
-    [ -z "$hour" ] && hour=0
+converter_para_24h() {
+    local horario="$1"
+    [ -z "$horario" ] && echo "00:00" && return
+    local parte_hora=$(echo "$horario" | cut -d' ' -f1)
+    local ampm=$(echo "$horario" | cut -d' ' -f2)
+    local hora=$(echo "$parte_hora" | cut -d: -f1 | sed 's/^0*//')
+    local min=$(echo "$parte_hora" | cut -d: -f2 | sed 's/^0*//')
+    [ -z "$hora" ] && hora=0
     [ -z "$min" ] && min=0
     case "$ampm" in
-        "PM") [ "$hour" -ne 12 ] && hour=$((hour + 12)) ;;
-        "AM") [ "$hour" -eq 12 ] && hour=0 ;;
+        "PM") [ "$hora" -ne 12 ] && hora=$((hora + 12)) ;;
+        "AM") [ "$hora" -eq 12 ] && hora=0 ;;
     esac
-    printf "%02d:%02d" "$hour" "$min"
+    printf "%02d:%02d" "$hora" "$min"
 }
 
-time_to_seconds() {
-    local time_24h="$1"
-    [ -z "$time_24h" ] && echo "0" && return
-    local h=$(echo "$time_24h" | cut -d: -f1 | sed 's/^0*//')
-    local m=$(echo "$time_24h" | cut -d: -f2 | sed 's/^0*//')
+hora_para_segundos() {
+    local hora_24h="$1"
+    [ -z "$hora_24h" ] && echo "0" && return
+    local h=$(echo "$hora_24h" | cut -d: -f1 | sed 's/^0*//')
+    local m=$(echo "$hora_24h" | cut -d: -f2 | sed 's/^0*//')
     [ -z "$h" ] && h=0
     [ -z "$m" ] && m=0
-    echo $(( (h * SECONDS_PER_HOUR) + (m * SECONDS_PER_MINUTE) ))
+    echo $(( (h * SEGUNDOS_POR_HORA) + (m * SEGUNDOS_POR_MINUTO) ))
 }
 
-format_duration() {
+formata_duracao() {
     local s=${1:-0}
     [ "$s" -lt 0 ] && s=0
-    local hours=$((s / SECONDS_PER_HOUR))
-    local minutes=$(((s % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE))
-    echo "${hours}h ${minutes}min"
+    local horas=$((s / SEGUNDOS_POR_HORA))
+    local minutos=$(((s % SEGUNDOS_POR_HORA) / SEGUNDOS_POR_MINUTO))
+    echo "${horas}h ${minutos}min"
 }
 
-format_seconds_to_ampm() {
-    local seconds=$1
-    local hour24=$((seconds / SECONDS_PER_HOUR))
-    local minutes=$(((seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE))
-    local hour12=$hour24
+formata_segundos_para_ampm() {
+    local segundos=$1
+    local hora24=$((segundos / SEGUNDOS_POR_HORA))
+    local minutos=$(((segundos % SEGUNDOS_POR_HORA) / SEGUNDOS_POR_MINUTO))
+    local hora12=$hora24
     local ampm="AM"
-    if [ $hour24 -ge 12 ]; then
+    if [ $hora24 -ge 12 ]; then
         ampm="PM"
-        [ $hour24 -gt 12 ] && hour12=$((hour24 - 12))
+        [ $hora24 -gt 12 ] && hora12=$((hora24 - 12))
     fi
-    [ $hour12 -eq 0 ] && hour12=12
-    printf "%02d:%02d %s" $hour12 $minutes $ampm
+    [ $hora12 -eq 0 ] && hora12=12
+    printf "%02d:%02d %s" $hora12 $minutos $ampm
 }
 
 log_message "=== Monitor Astro Lite Iniciado ==="
@@ -79,116 +79,116 @@ fi
 
 echo "$json" > "$DIR/.astro_wttr.json"
 
-# Usando jq para extrair dados (compatível ash)
-sunrise=$(echo "$json" | jq -r '.weather[0].astronomy[0].sunrise')
-sunset=$(echo "$json" | jq -r '.weather[0].astronomy[0].sunset')
-moonrise=$(echo "$json" | jq -r '.weather[0].astronomy[0].moonrise')
-moonset=$(echo "$json" | jq -r '.weather[0].astronomy[0].moonset')
-moon_phase=$(echo "$json" | jq -r '.weather[0].astronomy[0].moon_phase')
-moon_illumination=$(echo "$json" | jq -r '.weather[0].astronomy[0].moon_illumination')
+# Usando jq para extrair dados
+nascer_sol=$(echo "$json" | jq -r '.weather[0].astronomy[0].sunrise')
+por_sol=$(echo "$json" | jq -r '.weather[0].astronomy[0].sunset')
+nascer_lua=$(echo "$json" | jq -r '.weather[0].astronomy[0].moonrise')
+por_lua=$(echo "$json" | jq -r '.weather[0].astronomy[0].moonset')
+fase_lua=$(echo "$json" | jq -r '.weather[0].astronomy[0].moon_phase')
+iluminacao_lua=$(echo "$json" | jq -r '.weather[0].astronomy[0].moon_illumination')
 
-moonset_tomorrow=$(echo "$json" | jq -r '.weather[1].astronomy[0].moonset')
-sunrise_tomorrow=$(echo "$json" | jq -r '.weather[1].astronomy[0].sunrise')
+por_lua_amanha=$(echo "$json" | jq -r '.weather[1].astronomy[0].moonset')
+nascer_sol_amanha=$(echo "$json" | jq -r '.weather[1].astronomy[0].sunrise')
 
-CURRENT_DATE=$(date '+%B %d, %Y')
-CURRENT_TIME=$(date '+%I:%M:%S %p')
+DATA_ATUAL=$(date '+%d/%m/%Y')
+HORA_ATUAL=$(date '+%H:%M:%S')
 
-sunrise_sec=$(time_to_seconds "$(convert_to_24h "$sunrise")")
-sunset_sec=$(time_to_seconds "$(convert_to_24h "$sunset")")
-sunrise_tomorrow_sec=$(( $(time_to_seconds "$(convert_to_24h "$sunrise_tomorrow")") + SECONDS_PER_DAY ))
-moonrise_sec=$(time_to_seconds "$(convert_to_24h "$moonrise")")
+nascer_sol_seg=$(hora_para_segundos "$(converter_para_24h "$nascer_sol")")
+por_sol_seg=$(hora_para_segundos "$(converter_para_24h "$por_sol")")
+nascer_sol_amanha_seg=$(( $(hora_para_segundos "$(converter_para_24h "$nascer_sol_amanha")") + SEGUNDOS_POR_DIA ))
+nascer_lua_seg=$(hora_para_segundos "$(converter_para_24h "$nascer_lua")")
 
 # Duração do dia e da noite
-day_duration_seconds=$((sunset_sec - sunrise_sec))
-night_duration_seconds=$((SECONDS_PER_DAY - day_duration_seconds))
-DAY_DURATION=$(format_duration $day_duration_seconds)
-NIGHT_DURATION=$(format_duration $night_duration_seconds)
+duracao_dia_segundos=$((por_sol_seg - nascer_sol_seg))
+duracao_noite_segundos=$((SEGUNDOS_POR_DIA - duracao_dia_segundos))
+DURACAO_DIA=$(formata_duracao $duracao_dia_segundos)
+DURACAO_NOITE=$(formata_duracao $duracao_noite_segundos)
 
 # --- Cálculo fiel da luz lunar e escuridão ---
-LUNAR_LIGHT_INFO="Total: 0h 0min\n• Sem luz lunar significativa"
-DARKNESS_INFO="Dados insuficientes para cálculo."
+INFO_LUZ_LUNAR="Total: 0h 0min\n• Sem luz lunar significativa"
+INFO_ESCURIDAO="Dados insuficientes para cálculo."
 
 # Intervalo noturno
-night_start=$sunset_sec
-night_end=$sunrise_tomorrow_sec
+noite_inicio=$por_sol_seg
+noite_fim=$nascer_sol_amanha_seg
 
 # Intervalo lunar
-moonset_sec=0
-if [ "$moonset" = "No moonset" ] && [ -n "$moonset_tomorrow" ] && [ "$moonset_tomorrow" != "No moonset" ]; then
-    moonset_sec=$(( $(time_to_seconds "$(convert_to_24h "$moonset_tomorrow")") + SECONDS_PER_DAY ))
+por_lua_seg=0
+if [ "$por_lua" = "No moonset" ] && [ -n "$por_lua_amanha" ] && [ "$por_lua_amanha" != "No moonset" ]; then
+    por_lua_seg=$(( $(hora_para_segundos "$(converter_para_24h "$por_lua_amanha")") + SEGUNDOS_POR_DIA ))
 else
-    moonset_sec=$(time_to_seconds "$(convert_to_24h "$moonset")")
-    [ "$moonset_sec" -le "$moonrise_sec" ] && moonset_sec=$((moonset_sec + SECONDS_PER_DAY))
+    por_lua_seg=$(hora_para_segundos "$(converter_para_24h "$por_lua")")
+    [ "$por_lua_seg" -le "$nascer_lua_seg" ] && por_lua_seg=$((por_lua_seg + SEGUNDOS_POR_DIA))
 fi
 
 # Interseção dos intervalos [noite] ∩ [lua acima do horizonte]
-lunar_light_start=$((moonrise_sec > night_start ? moonrise_sec : night_start))
-lunar_light_end=$((moonset_sec < night_end ? moonset_sec : night_end))
+luz_lunar_inicio=$((nascer_lua_seg > noite_inicio ? nascer_lua_seg : noite_inicio))
+luz_lunar_fim=$((por_lua_seg < noite_fim ? por_lua_seg : noite_fim))
 
-if [ "$lunar_light_end" -gt "$lunar_light_start" ]; then
-    lunar_light_seconds=$((lunar_light_end - lunar_light_start))
-    LUNAR_LIGHT_INFO="Total: $(format_duration $lunar_light_seconds)\n• $(format_seconds_to_ampm $((lunar_light_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((lunar_light_end % SECONDS_PER_DAY))): $(format_duration $lunar_light_seconds)"
+if [ "$luz_lunar_fim" -gt "$luz_lunar_inicio" ]; then
+    luz_lunar_segundos=$((luz_lunar_fim - luz_lunar_inicio))
+    INFO_LUZ_LUNAR="Total: $(formata_duracao $luz_lunar_segundos)\n• $(formata_segundos_para_ampm $((luz_lunar_inicio % SEGUNDOS_POR_DIA))) às $(formata_segundos_para_ampm $((luz_lunar_fim % SEGUNDOS_POR_DIA))): $(formata_duracao $luz_lunar_segundos)"
     # Escuridão antes e depois da luz lunar
-    darkness1_start=$night_start
-    darkness1_end=$lunar_light_start
-    darkness2_start=$lunar_light_end
-    darkness2_end=$night_end
-    darkness1_seconds=$((darkness1_end - darkness1_start))
-    darkness2_seconds=$((darkness2_end - darkness2_start))
-    total_darkness_seconds=$(( (darkness1_seconds > 0 ? darkness1_seconds : 0) + (darkness2_seconds > 0 ? darkness2_seconds : 0) ))
-    DARKNESS_INFO="Total: $(format_duration $total_darkness_seconds)"
-    [ "$darkness1_seconds" -gt 0 ] && DARKNESS_INFO="${DARKNESS_INFO}\n• $(format_seconds_to_ampm $((darkness1_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness1_end % SECONDS_PER_DAY))): $(format_duration $darkness1_seconds)"
-    [ "$darkness2_seconds" -gt 0 ] && DARKNESS_INFO="${DARKNESS_INFO}\n• $(format_seconds_to_ampm $((darkness2_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness2_end % SECONDS_PER_DAY))): $(format_duration $darkness2_seconds)"
+    escuridao1_inicio=$noite_inicio
+    escuridao1_fim=$luz_lunar_inicio
+    escuridao2_inicio=$luz_lunar_fim
+    escuridao2_fim=$noite_fim
+    escuridao1_segundos=$((escuridao1_fim - escuridao1_inicio))
+    escuridao2_segundos=$((escuridao2_fim - escuridao2_inicio))
+    total_escuridao_segundos=$(( (escuridao1_segundos > 0 ? escuridao1_segundos : 0) + (escuridao2_segundos > 0 ? escuridao2_segundos : 0) ))
+    INFO_ESCURIDAO="Total: $(formata_duracao $total_escuridao_segundos)"
+    [ "$escuridao1_segundos" -gt 0 ] && INFO_ESCURIDAO="${INFO_ESCURIDAO}\n• $(formata_segundos_para_ampm $((escuridao1_inicio % SEGUNDOS_POR_DIA))) às $(formata_segundos_para_ampm $((escuridao1_fim % SEGUNDOS_POR_DIA))): $(formata_duracao $escuridao1_segundos)"
+    [ "$escuridao2_segundos" -gt 0 ] && INFO_ESCURIDAO="${INFO_ESCURIDAO}\n• $(formata_segundos_para_ampm $((escuridao2_inicio % SEGUNDOS_POR_DIA))) às $(formata_segundos_para_ampm $((escuridao2_fim % SEGUNDOS_POR_DIA))): $(formata_duracao $escuridao2_segundos)"
 else
     # Toda a noite é escura
-    darkness_seconds=$((night_end - night_start))
-    DARKNESS_INFO="Total: $(format_duration $darkness_seconds)\n• $(format_seconds_to_ampm $((night_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((night_end % SECONDS_PER_DAY))): $(format_duration $darkness_seconds)"
-    LUNAR_LIGHT_INFO="Total: 0h 0min\n• Sem luz lunar significativa"
+    escuridao_segundos=$((noite_fim - noite_inicio))
+    INFO_ESCURIDAO="Total: $(formata_duracao $escuridao_segundos)\n• $(formata_segundos_para_ampm $((noite_inicio % SEGUNDOS_POR_DIA))) às $(formata_segundos_para_ampm $((noite_fim % SEGUNDOS_POR_DIA))): $(formata_duracao $escuridao_segundos)"
+    INFO_LUZ_LUNAR="Total: 0h 0min\n• Sem luz lunar significativa"
 fi
 
-case "$moon_phase" in
-    "New Moon")          MOON_PHASE="🌑 Lua Nova" ;;
-    "Waxing Crescent")   MOON_PHASE="🌒 Crescente Côncava" ;;
-    "First Quarter")     MOON_PHASE="🌓 Quarto Crescente" ;;
-    "Waxing Gibbous")    MOON_PHASE="🌔 Gibosa Crescente" ;;
-    "Full Moon")         MOON_PHASE="🌕 Lua Cheia" ;;
-    "Waning Gibbous")    MOON_PHASE="🌖 Gibosa Minguante" ;;
-    "Last Quarter")      MOON_PHASE="🌗 Quarto Minguante" ;;
-    "Waning Crescent")   MOON_PHASE="🌘 Minguante Côncava" ;;
-    *)                   MOON_PHASE="🌙 $moon_phase" ;;
+case "$fase_lua" in
+    "New Moon")          FASE_LUA="🌑 Lua Nova" ;;
+    "Waxing Crescent")   FASE_LUA="🌒 Crescente Côncava" ;;
+    "First Quarter")     FASE_LUA="🌓 Quarto Crescente" ;;
+    "Waxing Gibbous")    FASE_LUA="🌔 Gibosa Crescente" ;;
+    "Full Moon")         FASE_LUA="🌕 Lua Cheia" ;;
+    "Waning Gibbous")    FASE_LUA="🌖 Gibosa Minguante" ;;
+    "Last Quarter")      FASE_LUA="🌗 Quarto Minguante" ;;
+    "Waning Crescent")   FASE_LUA="🌘 Minguante Côncava" ;;
+    *)                   FASE_LUA="🌙 $fase_lua" ;;
 esac
 
-MESSAGE_BODY=$(cat << EOF
+MENSAGEM=$(cat << EOF
 
 ☀️ Informações Solares e Lunares - Uberlândia (Lite)
 ═══════════════════════
-📅 Data: ${CURRENT_DATE}
-🕐 Hora da consulta: ${CURRENT_TIME}
+📅 Data: ${DATA_ATUAL}
+🕐 Hora da consulta: ${HORA_ATUAL}
 
 🌅 HORÁRIOS DO SOL:
-• Nascer do sol: ${sunrise}
-• Pôr do sol: ${sunset}
+• Nascer do sol: ${nascer_sol}
+• Pôr do sol: ${por_sol}
 
 ⏱️ DURAÇÃO:
-• Duração do dia: ${DAY_DURATION}
-• Duração da noite: ${NIGHT_DURATION}
+• Duração do dia: ${DURACAO_DIA}
+• Duração da noite: ${DURACAO_NOITE}
 
 🌙 Informações Lunares:
-🌙 Fase: ${MOON_PHASE}
-• Iluminação: ${moon_illumination}%
-• Nascer da lua: ${moonrise}
-• Pôr da lua: ${moonset}
+🌙 Fase: ${FASE_LUA}
+• Iluminação: ${iluminacao_lua}%
+• Nascer da lua: ${nascer_lua}
+• Pôr da lua: ${por_lua}
 
 🌃 TEMPO DE ESCURIDÃO:
-$(echo -e "${DARKNESS_INFO}")
+$(echo -e "${INFO_ESCURIDAO}")
 
 🌙 TEMPO DE LUZ LUNAR:
-$(echo -e "${LUNAR_LIGHT_INFO}")
+$(echo -e "${INFO_LUZ_LUNAR}")
 
 📊 Fonte: v2.wttr.in
 EOF
 )
 
-echo "$MESSAGE_BODY"
+echo "$MENSAGEM"
 log_message "=== Monitor Astro Lite Finalizado ==="
 exit 0
