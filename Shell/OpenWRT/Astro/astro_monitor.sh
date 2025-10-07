@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # ========================================
-# Monitor Astro (Sol & Lua) para OpenWrt - Lógica Fiel de Escuridão/Luz Lunar
+# Monitor Astro (Sol & Lua) para OpenWrt - Lógica fiel, robusta e upgrade para tratamento de moonset "No moonset"
 # ========================================
 
 # --- Diretório e Arquivo de Log ---
@@ -26,9 +26,9 @@ SECONDS_PER_DAY=$((HOURS_PER_DAY * SECONDS_PER_HOUR))
 PING_TIMEOUT=2
 CURL_TIMEOUT_SOL=10
 CURL_TIMEOUT_LUA=15
-RETRY_DELAY=30
+RETRY_DELAY=3
 CALCULATION_DELAY=2
-MAX_LUA_RETRIES=5
+MAX_LUA_RETRIES=10
 
 # --- Funções ---
 
@@ -42,8 +42,8 @@ send_notification() {
     message=$(printf "[%s]\n%s" "$script_name" "$1")
     log_message "Enviando notificação via WhatsApp..."
     # Descomente as linhas abaixo para ativar o envio de notificações
-    "$DIR/send_whatsapp.sh" "$message" >/dev/null 2>&1
-    "$DIR/send_whatsapp_2.sh" "$message" >/dev/null 2>&1
+    # "$DIR/send_whatsapp.sh" "$message" >/dev/null 2>&1
+    # "$DIR/send_whatsapp_2.sh" "$message" >/dev/null 2>&1
     log_message "Notificação enviada."
 }
 
@@ -59,7 +59,7 @@ utc_to_local_manual() {
     local hour=$(echo "$time_part" | cut -d: -f1 | sed 's/^0*//')
     local rest_of_time=$(echo "$time_part" | cut -d: -f2,3)
     local local_hour=$((hour + TIMEZONE_OFFSET_HOURS))
-    
+
     if [ "$local_hour" -lt 0 ]; then
         local_hour=$((local_hour + HOURS_PER_DAY))
         local local_date_part=$(date -d "$date_part -1 day" "+%Y-%m-%d")
@@ -80,7 +80,8 @@ convert_to_24h() {
     local ampm=$(echo "$time_str" | cut -d' ' -f2)
     local hour=$(echo "$time_part" | cut -d: -f1 | sed 's/^0*//')
     local min=$(echo "$time_part" | cut -d: -f2 | sed 's/^0*//')
-    
+    [ -z "$hour" ] && hour=0
+    [ -z "$min" ] && min=0
     case "$ampm" in
         "PM") [ "$hour" -ne 12 ] && hour=$((hour + 12)) ;;
         "AM") [ "$hour" -eq 12 ] && hour=0 ;;
@@ -94,6 +95,8 @@ time_to_seconds() {
     local h=$(echo "$time_24h" | cut -d: -f1 | sed 's/^0*//')
     local m=$(echo "$time_24h" | cut -d: -f2 | sed 's/^0*//')
     local s=$(echo "$time_24h" | cut -d: -f3 | sed 's/^0*//')
+    [ -z "$h" ] && h=0
+    [ -z "$m" ] && m=0
     [ -z "$s" ] && s=0
     echo $(( (h * SECONDS_PER_HOUR) + (m * SECONDS_PER_MINUTE) + s ))
 }
@@ -171,10 +174,13 @@ CURRENT_DATE=$(date '+%B %d, %Y')
 CURRENT_TIME=$(date '+%I:%M:%S %p')
 log_message "✅ Dados solares processados."
 
-# --- Processamento Lunar (LÓGICA DE RETENTATIVA CORRIGIDA) ---
+# --- Processamento Lunar (LÓGICA DE RETENTATIVA CORRIGIDA + "No moonset" UPGRADE) ---
 log_message "🌙 Buscando dados lunares..."
 LUA_RETRY_COUNT=0
 moon_phase=""
+moonset=""
+moonrise=""
+moonset_tomorrow=""
 
 while [ -z "$moon_phase" ] && [ "$LUA_RETRY_COUNT" -lt "$MAX_LUA_RETRIES" ]; do
     LUA_RETRY_COUNT=$((LUA_RETRY_COUNT + 1))
@@ -184,18 +190,35 @@ while [ -z "$moon_phase" ] && [ "$LUA_RETRY_COUNT" -lt "$MAX_LUA_RETRIES" ]; do
     fi
 
     json_lua_raw=$(curl -s -m $CURL_TIMEOUT_LUA "$API_URL_LUA")
-
     if [ -n "$json_lua_raw" ]; then
         json_load "$json_lua_raw"
-        json_select weather; json_select 1; json_select astronomy; json_select 1
+        # Pega o dia de hoje (weather[0])
+        json_select weather
+        json_select 1
+        json_select astronomy
+        json_select 1
         json_get_vars moon_phase moon_illumination moonrise moonset
         json_select ..; json_select ..; json_select ..; json_select ..
+        # Se moonset for "No moonset", tenta pegar do próximo dia!
+        if [ "$moonset" = "No moonset" ]; then
+            json_select weather
+            json_select 2
+            json_select astronomy
+            json_select 1
+            json_get_var moonset_tomorrow moonset
+            json_select ..; json_select ..; json_select ..; json_select ..
+            # Só usa se for até meio-dia (ajuste conforme desejado)
+            moonset_tomorrow_24h=$(convert_to_24h "$moonset_tomorrow")
+            moonset_tomorrow_sec=$(time_to_seconds "$moonset_tomorrow_24h")
+            if [ "$moonset_tomorrow_sec" -le $((12 * 3600)) ]; then
+                moonset="$moonset_tomorrow"
+            fi
+        fi
     fi
 done
 
 if [ -z "$moon_phase" ]; then
     log_message "❌ ERRO: Falha ao obter e processar dados da API da Lua após $MAX_LUA_RETRIES tentativas."
-    log_message " A resposta da API pode estar malformada ou o serviço indisponível."
     send_notification "Erro crítico ao obter dados lunares após $MAX_LUA_RETRIES tentativas. O script será encerrado."
     exit 1
 fi
@@ -213,14 +236,14 @@ case "$moon_phase" in
 esac
 log_message "✅ Dados lunares processados."
 
-# --- Lógica fiel de escuridão e luz lunar ---
+# --- Lógica fiel de escuridão e luz lunar --- (VERSÃO CORRIGIDA COMPLETA)
 log_message "⏳ Calculando tempo de escuridão e luz lunar..."
 sleep $CALCULATION_DELAY
 
 DARKNESS_INFO="Dados insuficientes para cálculo."
 LUNAR_LIGHT_INFO="Dados insuficientes para cálculo."
 
-if [ -n "$LAST_LIGHT" ] && [ -n "$FIRST_LIGHT" ] && [ -n "$moonrise" ] && [ -n "$moonset" ]; then
+if [ -n "$LAST_LIGHT" ] && [ -n "$FIRST_LIGHT" ] && [ -n "$moonrise" ] && [ -n "$moonset" ] && [ "$moonset" != "No moonset" ]; then
     last_light_sec=$(time_to_seconds "$(convert_to_24h "$LAST_LIGHT")")
     first_light_sec=$(time_to_seconds "$(convert_to_24h "$FIRST_LIGHT")")
     if [ "$first_light_sec" -le "$last_light_sec" ]; then
@@ -234,34 +257,29 @@ if [ -n "$LAST_LIGHT" ] && [ -n "$FIRST_LIGHT" ] && [ -n "$moonrise" ] && [ -n "
     moonset_sec=$(time_to_seconds "$(convert_to_24h "$moonset")")
     [ "$moonset_sec" -le "$moonrise_sec" ] && moonset_sec=$((moonset_sec + SECONDS_PER_DAY))
 
-    # Inicializa resultados padrão
-    LUNAR_LIGHT_INFO="Total: 0h 0min\n• Sem luz lunar significativa"
-    DARKNESS_INFO="Total: $(format_duration $((night_end-night_start)))\n• $(format_seconds_to_ampm $((night_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((night_end % SECONDS_PER_DAY))): $(format_duration $((night_end-night_start)))"
+    # Interseção dos intervalos [noite] ∩ [lua acima do horizonte]
+    lunar_light_start=$((moonrise_sec > night_start ? moonrise_sec : night_start))
+    lunar_light_end=$((moonset_sec < night_end ? moonset_sec : night_end))
 
-    # Caso: lua já está no céu ao anoitecer e se põe durante a noite (caso clássico)
-    if [ "$moonrise_sec" -le "$night_start" ] && [ "$moonset_sec" -gt "$night_start" ] && [ "$moonset_sec" -le "$night_end" ]; then
-        lunar_start=$night_start
-        lunar_end=$moonset_sec
-        darkness_start=$lunar_end
-        darkness_end=$night_end
-        lunar_light_seconds=$((lunar_end - lunar_start))
-        darkness_seconds=$((darkness_end - darkness_start))
-        LUNAR_LIGHT_INFO="Total: $(format_duration $lunar_light_seconds)\n• $(format_seconds_to_ampm $((lunar_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((lunar_end % SECONDS_PER_DAY))): $(format_duration $lunar_light_seconds)"
-        DARKNESS_INFO="Total: $(format_duration $darkness_seconds)\n• $(format_seconds_to_ampm $((darkness_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness_end % SECONDS_PER_DAY))): $(format_duration $darkness_seconds)"
-    # Caso: lua nasce durante a noite e se põe durante a noite (dois intervalos de escuridão)
-    elif [ "$moonrise_sec" -gt "$night_start" ] && [ "$moonrise_sec" -lt "$night_end" ] && [ "$moonset_sec" -gt "$moonrise_sec" ] && [ "$moonset_sec" -le "$night_end" ]; then
-        lunar_start=$moonrise_sec
-        lunar_end=$moonset_sec
+    if [ "$lunar_light_end" -gt "$lunar_light_start" ]; then
+        lunar_light_seconds=$((lunar_light_end - lunar_light_start))
+        LUNAR_LIGHT_INFO="Total: $(format_duration $lunar_light_seconds)\n• $(format_seconds_to_ampm $((lunar_light_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((lunar_light_end % SECONDS_PER_DAY))): $(format_duration $lunar_light_seconds)"
+        # A escuridão é o restante da noite antes e/ou depois da luz lunar
         darkness1_start=$night_start
-        darkness1_end=$lunar_start
-        darkness2_start=$lunar_end
+        darkness1_end=$lunar_light_start
+        darkness2_start=$lunar_light_end
         darkness2_end=$night_end
-        lunar_light_seconds=$((lunar_end - lunar_start))
         darkness1_seconds=$((darkness1_end - darkness1_start))
         darkness2_seconds=$((darkness2_end - darkness2_start))
-        total_darkness_seconds=$((darkness1_seconds + darkness2_seconds))
-        LUNAR_LIGHT_INFO="Total: $(format_duration $lunar_light_seconds)\n• $(format_seconds_to_ampm $((lunar_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((lunar_end % SECONDS_PER_DAY))): $(format_duration $lunar_light_seconds)"
-        DARKNESS_INFO="Total: $(format_duration $total_darkness_seconds)\n• $(format_seconds_to_ampm $((darkness1_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness1_end % SECONDS_PER_DAY))): $(format_duration $darkness1_seconds)\n• $(format_seconds_to_ampm $((darkness2_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness2_end % SECONDS_PER_DAY))): $(format_duration $darkness2_seconds)"
+        total_darkness_seconds=$(( (darkness1_seconds > 0 ? darkness1_seconds : 0) + (darkness2_seconds > 0 ? darkness2_seconds : 0) ))
+        DARKNESS_INFO="Total: $(format_duration $total_darkness_seconds)"
+        [ "$darkness1_seconds" -gt 0 ] && DARKNESS_INFO="${DARKNESS_INFO}\n• $(format_seconds_to_ampm $((darkness1_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness1_end % SECONDS_PER_DAY))): $(format_duration $darkness1_seconds)"
+        [ "$darkness2_seconds" -gt 0 ] && DARKNESS_INFO="${DARKNESS_INFO}\n• $(format_seconds_to_ampm $((darkness2_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((darkness2_end % SECONDS_PER_DAY))): $(format_duration $darkness2_seconds)"
+    else
+        # Sem interseção: toda a noite é escura
+        darkness_seconds=$((night_end - night_start))
+        DARKNESS_INFO="Total: $(format_duration $darkness_seconds)\n• $(format_seconds_to_ampm $((night_start % SECONDS_PER_DAY))) às $(format_seconds_to_ampm $((night_end % SECONDS_PER_DAY))): $(format_duration $darkness_seconds)"
+        LUNAR_LIGHT_INFO="Total: 0h 0min\n• Sem luz lunar significativa"
     fi
 fi
 
