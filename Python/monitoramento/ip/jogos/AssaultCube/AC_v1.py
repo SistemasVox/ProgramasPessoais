@@ -56,24 +56,45 @@ class ReadBuffer:
                 break
         return self._data[start:self._position - 1].decode("ascii", "ignore")
 
-def get_server_list():
-    """Obtém a lista de servidores do masterserver"""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(5)
-            s.connect((masterserver_host, masterserver_port))
-            s.sendall(b'list\n')
-            
-            response = b""
-            while True:
-                data = s.recv(4096)
-                if not data:
-                    break
-                response += data
+def get_server_list(retries=3):
+    """Obtém a lista de servidores do masterserver com retry automático"""
+    last_error = None
+    
+    for attempt in range(retries):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(10)  # Timeout aumentado para 10s
+                s.connect((masterserver_host, masterserver_port))
+                s.sendall(b'list\n')
+                
+                response = b""
+                while True:
+                    data = s.recv(4096)
+                    if not data:
+                        break
+                    response += data
 
-            return response.decode('utf-8')
-    except Exception as e:
-        return None
+                return response.decode('utf-8')
+                
+        except socket.timeout:
+            last_error = f"Timeout na tentativa {attempt + 1}/{retries}"
+            if attempt < retries - 1:
+                time.sleep(2)  # Aguarda 2s antes de tentar novamente
+                continue
+        except ConnectionRefusedError:
+            last_error = f"Conexão recusada na tentativa {attempt + 1}/{retries}"
+            if attempt < retries - 1:
+                time.sleep(2)
+                continue
+        except Exception as e:
+            last_error = f"Erro na tentativa {attempt + 1}/{retries}: {type(e).__name__}: {e}"
+            if attempt < retries - 1:
+                time.sleep(2)
+                continue
+    
+    # Se chegou aqui, todas as tentativas falharam
+    print(f"Falha após {retries} tentativas. Último erro: {last_error}")
+    return None
 
 def parse_response(response):
     """Extrai os servidores da resposta do masterserver"""
@@ -423,11 +444,12 @@ class AssaultCubeMonitor:
     
     def search_servers(self):
         """Busca e atualiza lista de servidores"""
-        self.log("Buscando servidores...", "info")
+        self.log(">>> Buscando servidores...", "info")
         
         response = get_server_list()
         if not response:
-            self.log("Erro ao conectar ao masterserver!", "error")
+            self.log("❌ Erro ao conectar ao masterserver após múltiplas tentativas!", "error")
+            self.log("💡 Dica: Verifique sua conexão de internet", "warning")
             return
         
         servers = parse_response(response)
