@@ -13,7 +13,7 @@ masterserver_port = 28760
 # Configurações padrão
 DEFAULT_MIN_PLAYERS = 5
 DEFAULT_FAVORITE_MAPS = "village,casa,kasa,shine"
-DEFAULT_CHECK_INTERVAL = 30
+DEFAULT_CHECK_INTERVAL = 60
 
 # Nomes dos modos de jogo
 mode_names = [
@@ -57,32 +57,42 @@ class ReadBuffer:
         return self._data[start:self._position - 1].decode("ascii", "ignore")
 
 def get_server_list(retries=3):
-    """Obtém a lista de servidores do masterserver com retry automático"""
+    """Obtém a lista de servidores do masterserver usando HTTP (método oficial)"""
+    import urllib.request
+    import urllib.error
+    
+    # Parâmetros do cliente oficial AssaultCube 1.3.0.2
+    params = {
+        'action': 'list',
+        'name': 'AssaultCube',  # Nome do nosso cliente
+        'version': '1302',      # Versão do protocolo (AC 1.3.0.2)
+        'build': '0'            # Build
+    }
+    
+    # Construir URL com parâmetros
+    base_url = f"http://{masterserver_host}/retrieve.do"
+    query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+    url = f"{base_url}?{query_string}"
+    
     last_error = None
     
     for attempt in range(retries):
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(10)  # Timeout aumentado para 10s
-                s.connect((masterserver_host, masterserver_port))
-                s.sendall(b'list\n')
+            # Fazer requisição HTTP como o cliente oficial
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'AssaultCube/1.3.0.2')
+            
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = response.read().decode('utf-8')
+                return data
                 
-                response = b""
-                while True:
-                    data = s.recv(4096)
-                    if not data:
-                        break
-                    response += data
-
-                return response.decode('utf-8')
-                
-        except socket.timeout:
-            last_error = f"Timeout na tentativa {attempt + 1}/{retries}"
+        except urllib.error.HTTPError as e:
+            last_error = f"HTTP Error {e.code} na tentativa {attempt + 1}/{retries}: {e.reason}"
             if attempt < retries - 1:
-                time.sleep(2)  # Aguarda 2s antes de tentar novamente
+                time.sleep(2)
                 continue
-        except ConnectionRefusedError:
-            last_error = f"Conexão recusada na tentativa {attempt + 1}/{retries}"
+        except urllib.error.URLError as e:
+            last_error = f"URL Error na tentativa {attempt + 1}/{retries}: {e.reason}"
             if attempt < retries - 1:
                 time.sleep(2)
                 continue
