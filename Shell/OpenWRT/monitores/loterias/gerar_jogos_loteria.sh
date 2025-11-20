@@ -1,106 +1,40 @@
 #!/bin/sh
 
-################################################################################
 # Gerador de Jogos Aleatórios para Loterias da Caixa
-################################################################################
+# Versão 1.3 - OpenWrt/BusyBox compatível
 #
-# Descrição: Gera 3 sugestões de jogos aleatórios para loterias brasileiras
-# Autor: SistemasVox
-# Versão: 1.2.0
-# Licença: MIT
-#
-# Compatibilidade:
-#   - OpenWrt/BusyBox
-#   - POSIX shell (/bin/sh, ash, dash)
-#   - Linux embedded systems
-#
-# Dependências:
-#   - dd (coreutils ou busybox)
-#   - hexdump (bsdmainutils ou busybox)
-#   - sort, tr, sed (busybox)
-#
-# Uso:
-#   ./gerar_jogos_loteria.sh <nome_do_jogo>
-#
-# Exemplos:
-#   ./gerar_jogos_loteria.sh megasena
-#   ./gerar_jogos_loteria.sh lotofacil
-#
-# Jogos suportados:
-#   - megasena (6 números de 1-60)
-#   - maismilionaria (6 números de 1-50 + 2 trevos de 1-6)
-#   - lotofacil (15 números de 1-25)
-#   - quina (5 números de 1-80)
-#   - lotomania (50 números de 0-100)
-#   - duplasena (6 números de 1-50)
-#   - diadesorte (7 números de 1-31 + mês da sorte)
-#   - supersete (7 colunas com números de 0-9)
-#
-################################################################################
+# Uso: ./gerar_jogos_loteria.sh <nome_do_jogo>
+# Exemplo: ./gerar_jogos_loteria.sh megasena
 
-set -e  # Sai se houver erro
-
-# Constantes
-VERSION="1.2.0"
-SCRIPT_NAME=$(basename "$0")
-
-# --- VALIDAÇÃO DE ENTRADA ---
-
+# Verifica se foi passado o nome do jogo
 if [ -z "$1" ]; then
-    cat << EOF
-Uso: $SCRIPT_NAME <nome_do_jogo>
-
-Jogos disponíveis:
-  megasena        Mega-Sena (6 números de 1-60)
-  maismilionaria  +Milionária (6 números + 2 trevos)
-  lotofacil       Lotofácil (15 números de 1-25)
-  quina           Quina (5 números de 1-80)
-  lotomania       Lotomania (50 números de 0-100)
-  duplasena       Dupla Sena (6 números de 1-50)
-  diadesorte      Dia de Sorte (7 números + mês)
-  supersete       Super Sete (7 colunas de 0-9)
-
-Exemplos:
-  $SCRIPT_NAME megasena
-  $SCRIPT_NAME lotofacil
-
-Versão: $VERSION
-EOF
+    echo "Uso: $0 <nome_do_jogo>"
     exit 1
 fi
 
-JOGO=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+# Sanitiza o nome do jogo (compatível com BusyBox)
+sanitizar_nome() {
+    local nome="$1"
+    # Remove espaços em branco
+    nome=$(echo "$nome" | tr -d ' \t\n\r')
+    # Converte para minúsculas
+    nome=$(echo "$nome" | tr 'A-Z' 'a-z')
+    echo "$nome"
+}
 
-# --- FUNÇÕES DE GERAÇÃO ALEATÓRIA ---
+JOGO=$(sanitizar_nome "$1")
 
-# Gera número aleatório usando /dev/urandom
-# Compatível com OpenWrt/BusyBox (não usa 'od')
-# Argumentos: $1 = valor máximo (inclusive)
-# Retorno: número aleatório entre 0 e max
+# --- FUNÇÕES AUXILIARES ---
+
+# Gera número aleatório usando /dev/urandom (sem od)
 rand_number() {
     max=$1
-    
-    # Validação de entrada
-    if [ -z "$max" ] || [ "$max" -lt 0 ]; then
-        echo "0"
-        return 1
-    fi
-    
     # Lê 4 bytes do urandom, converte para hex, depois para decimal
-    hex=$(dd if=/dev/urandom bs=1 count=4 2>/dev/null | hexdump -e '1/4 "%u"' 2>/dev/null)
-    
-    # Fallback se hexdump falhar
-    if [ -z "$hex" ]; then
-        echo "0"
-        return 1
-    fi
-    
+    hex=$(dd if=/dev/urandom bs=1 count=4 2>/dev/null | hexdump -e '1/4 "%u"')
     echo $((hex % (max + 1)))
 }
 
-# Gera lista de números aleatórios únicos e ordenados
-# Argumentos: $1 = quantidade, $2 = valor máximo, $3 = valor mínimo (opcional, padrão=1)
-# Retorno: lista de números separados por espaço
+# Gera números aleatórios únicos e ordenados
 gerar_numeros() {
     qtd=$1
     max=$2
@@ -109,13 +43,13 @@ gerar_numeros() {
     numeros=""
     contador=0
     tentativas=0
-    max_tentativas=$((qtd * 100))  # Limite de segurança
+    max_tentativas=$((qtd * 50))
     
     while [ $contador -lt $qtd ] && [ $tentativas -lt $max_tentativas ]; do
         num=$((min + $(rand_number $((max - min)))))
         tentativas=$((tentativas + 1))
         
-        # Verifica duplicação (sem usar grep para performance)
+        # Verifica se o número já foi sorteado
         caso_encontrado=0
         for n in $numeros; do
             if [ "$n" = "$num" ]; then
@@ -130,18 +64,14 @@ gerar_numeros() {
         fi
     done
     
-    # Ordena numericamente e remove espaço final
+    # Ordena os números
     echo "$numeros" | tr ' ' '\n' | sort -n | tr '\n' ' ' | sed 's/ $//'
 }
 
-# --- FUNÇÕES DE FORMATAÇÃO ---
-
-# Formata número com zero à esquerda (2 dígitos)
-# Argumentos: $1 = número
-# Retorno: número formatado (ex: 01, 15)
+# Formata números com zero à esquerda (2 dígitos)
 formatar_numero() {
     num=$1
-    if [ "$num" -lt 10 ]; then
+    if [ $num -lt 10 ]; then
         echo "0$num"
     else
         echo "$num"
@@ -149,8 +79,6 @@ formatar_numero() {
 }
 
 # Quebra linha a cada N números para melhor legibilidade
-# Argumentos: $1 = lista de números, $2 = números por linha
-# Retorno: números formatados com quebras de linha
 formatar_linha() {
     numeros="$1"
     por_linha=$2
@@ -163,7 +91,6 @@ formatar_linha() {
         resultado="$resultado $num_formatado"
         contador=$((contador + 1))
         
-        # Adiciona quebra de linha
         if [ $((contador % por_linha)) -eq 0 ] && [ $contador -lt $total ]; then
             resultado="$resultado
    "
@@ -173,26 +100,13 @@ formatar_linha() {
     echo "$resultado"
 }
 
-# Imprime cabeçalho padronizado
-imprimir_cabecalho() {
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🎲 SUGESTÕES DE JOGOS 🎲"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-}
-
-# Imprime rodapé padronizado
-imprimir_rodape() {
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "💡 Boa sorte! 🍀"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-}
-
 # --- GERADORES POR TIPO DE JOGO ---
 
 gerar_megasena() {
-    imprimir_cabecalho
+    echo "┌────────────────────────────┐"
+    echo "🎲 SUGESTÕES DE JOGOS 🎲"
+    echo "└────────────────────────────┘"
+    echo ""
     
     i=1
     while [ $i -le 3 ]; do
@@ -201,27 +115,22 @@ gerar_megasena() {
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
     done
-    
-    imprimir_rodape
 }
 
 gerar_maismilionaria() {
-    imprimir_cabecalho
+    echo "┌────────────────────────────┐"
+    echo "🎲 SUGESTÕES DE JOGOS 🎲"
+    echo "└────────────────────────────┘"
+    echo ""
     
     i=1
     while [ $i -le 3 ]; do
         numeros=$(gerar_numeros 6 50)
         trevo1=$((1 + $(rand_number 5)))
         trevo2=$((1 + $(rand_number 5)))
-        
-        # Garante trevos diferentes
-        tentativas=0
-        while [ $trevo2 -eq $trevo1 ] && [ $tentativas -lt 10 ]; do
+        while [ $trevo2 -eq $trevo1 ]; do
             trevo2=$((1 + $(rand_number 5)))
-            tentativas=$((tentativas + 1))
         done
-        
-        # Ordena trevos
         if [ $trevo2 -lt $trevo1 ]; then
             temp=$trevo1
             trevo1=$trevo2
@@ -233,12 +142,13 @@ gerar_maismilionaria() {
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
     done
-    
-    imprimir_rodape
 }
 
 gerar_lotofacil() {
-    imprimir_cabecalho
+    echo "┌────────────────────────────┐"
+    echo "🎲 SUGESTÕES DE JOGOS 🎲"
+    echo "└────────────────────────────┘"
+    echo ""
     
     i=1
     while [ $i -le 3 ]; do
@@ -248,12 +158,13 @@ gerar_lotofacil() {
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
     done
-    
-    imprimir_rodape
 }
 
 gerar_quina() {
-    imprimir_cabecalho
+    echo "┌────────────────────────────┐"
+    echo "🎲 SUGESTÕES DE JOGOS 🎲"
+    echo "└────────────────────────────┘"
+    echo ""
     
     i=1
     while [ $i -le 3 ]; do
@@ -262,12 +173,13 @@ gerar_quina() {
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
     done
-    
-    imprimir_rodape
 }
 
 gerar_lotomania() {
-    imprimir_cabecalho
+    echo "┌────────────────────────────┐"
+    echo "🎲 SUGESTÕES DE JOGOS 🎲"
+    echo "└────────────────────────────┘"
+    echo ""
     
     i=1
     while [ $i -le 3 ]; do
@@ -277,12 +189,13 @@ gerar_lotomania() {
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
     done
-    
-    imprimir_rodape
 }
 
 gerar_duplasena() {
-    imprimir_cabecalho
+    echo "┌────────────────────────────┐"
+    echo "🎲 SUGESTÕES DE JOGOS 🎲"
+    echo "└────────────────────────────┘"
+    echo ""
     
     i=1
     while [ $i -le 3 ]; do
@@ -291,19 +204,19 @@ gerar_duplasena() {
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
     done
-    
-    imprimir_rodape
 }
 
 gerar_diadesorte() {
-    imprimir_cabecalho
+    echo "┌────────────────────────────┐"
+    echo "🎲 SUGESTÕES DE JOGOS 🎲"
+    echo "└────────────────────────────┘"
+    echo ""
     
     i=1
     while [ $i -le 3 ]; do
         numeros=$(gerar_numeros 7 31)
         mes_numero=$((1 + $(rand_number 11)))
         
-        # Mapeia número do mês para nome
         case $mes_numero in
             1) mes_nome="Janeiro" ;;
             2) mes_nome="Fevereiro" ;;
@@ -317,7 +230,6 @@ gerar_diadesorte() {
             10) mes_nome="Outubro" ;;
             11) mes_nome="Novembro" ;;
             12) mes_nome="Dezembro" ;;
-            *) mes_nome="Janeiro" ;;  # Fallback
         esac
         
         echo "Jogo $i: $(formatar_linha "$numeros" 7)"
@@ -325,12 +237,13 @@ gerar_diadesorte() {
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
     done
-    
-    imprimir_rodape
 }
 
 gerar_supersete() {
-    imprimir_cabecalho
+    echo "┌────────────────────────────┐"
+    echo "🎲 SUGESTÕES DE JOGOS 🎲"
+    echo "└────────────────────────────┘"
+    echo ""
     
     i=1
     while [ $i -le 3 ]; do
@@ -346,8 +259,6 @@ gerar_supersete() {
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
     done
-    
-    imprimir_rodape
 }
 
 # --- EXECUÇÃO PRINCIPAL ---
@@ -378,11 +289,15 @@ case "$JOGO" in
         gerar_supersete
         ;;
     *)
-        echo "Erro: Jogo '$JOGO' não é suportado."
-        echo ""
-        echo "Execute '$SCRIPT_NAME' sem argumentos para ver a lista de jogos disponíveis."
+        echo "❌ Jogo '$1' não é suportado ou está corrompido." >&2
+        echo "Nome recebido após sanitização: '$JOGO'" >&2
+        echo "" >&2
+        echo "Jogos disponíveis: megasena, maismilionaria, lotofacil, quina, lotomania, duplasena, diadesorte, supersete" >&2
         exit 1
         ;;
 esac
 
-exit 0
+echo ""
+echo "┌────────────────────────────┐"
+echo "💡 Boa sorte! 🍀"
+echo "└────────────────────────────┘"
