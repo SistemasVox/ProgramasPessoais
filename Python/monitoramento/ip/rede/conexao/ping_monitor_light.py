@@ -93,13 +93,103 @@ class PingGauge(tk.Canvas):
         self.min_ping, self.max_ping, self.ping_history, self.recent = 9999, 0, [], []
         self.itemconfigure(self.txt_min, text="Min\n---"); self.itemconfigure(self.txt_max, text="Max\n---"); self._anim(225, "#00FF00")
 
+
+class SystemMonitorCanvas(tk.Canvas):
+    """Canvas customizado para exibir informações de CPU e RAM com barras de progresso segmentadas"""
+    def __init__(self, parent, width=400, height=24, **kw):
+        super().__init__(parent, width=width, height=height, bg="#1a1a1a", highlightthickness=0, **kw)
+        self.width = width
+        self.height = height
+        self.num_segments = 15  # Número de barras verticais
+        self.segment_width = 3  # Largura de cada barra
+        self.segment_spacing = 2  # Espaçamento entre barras
+        
+        # Fundo da barra de CPU (esquerda)
+        self.cpu_bg = self.create_rectangle(5, 4, 80, height-4, fill="#0a0a0a", outline="#333333", width=1)
+        
+        # Fundo da barra de RAM (direita)
+        self.ram_bg = self.create_rectangle(width-80, 4, width-5, height-4, fill="#0a0a0a", outline="#333333", width=1)
+        
+        # Criar segmentos verticais para CPU (esquerda para direita)
+        self.cpu_segments = []
+        start_x = 7
+        for i in range(self.num_segments):
+            x = start_x + i * (self.segment_width + self.segment_spacing)
+            seg = self.create_rectangle(x, 6, x + self.segment_width, height-6, 
+                                        fill="#0a0a0a", outline="")
+            self.cpu_segments.append(seg)
+        
+        # Criar segmentos verticais para RAM (direita para esquerda)
+        self.ram_segments = []
+        start_x_ram = width - 7 - self.segment_width
+        for i in range(self.num_segments):
+            x = start_x_ram - i * (self.segment_width + self.segment_spacing)
+            seg = self.create_rectangle(x, 6, x + self.segment_width, height-6, 
+                                        fill="#0a0a0a", outline="")
+            self.ram_segments.append(seg)
+        
+        # Textos
+        self.cpu_text = self.create_text(85, height//2, text="CPU: --%", fill="#AAAAAA", 
+                                         font=("Arial", 9), anchor="w")
+        self.ram_text = self.create_text(width-85, height//2, text="RAM: --%", fill="#AAAAAA", 
+                                         font=("Arial", 9), anchor="e")
+        
+        # Separador
+        self.create_text(width//2, height//2, text="|", fill="#555555", font=("Arial", 9))
+    
+    def update_values(self, cpu_percent, ram_percent):
+        """Atualiza os valores de CPU e RAM com animação das barras segmentadas"""
+        # Atualizar textos
+        self.itemconfig(self.cpu_text, text=f"CPU: {cpu_percent:.1f}%")
+        self.itemconfig(self.ram_text, text=f"RAM: {ram_percent:.1f}%")
+        
+        # Atualizar segmentos da CPU
+        segments_to_fill_cpu = int((cpu_percent / 100) * self.num_segments)
+        for i, seg in enumerate(self.cpu_segments):
+            if i < segments_to_fill_cpu:
+                # Calcular cor baseada na posição do segmento
+                seg_percent = ((i + 1) / self.num_segments) * 100
+                color = self._get_color_for_percent(seg_percent)
+                self.itemconfig(seg, fill=color)
+            else:
+                self.itemconfig(seg, fill="#0a0a0a")
+        
+        # Atualizar segmentos da RAM
+        segments_to_fill_ram = int((ram_percent / 100) * self.num_segments)
+        for i, seg in enumerate(self.ram_segments):
+            if i < segments_to_fill_ram:
+                # Calcular cor baseada na posição do segmento
+                seg_percent = ((i + 1) / self.num_segments) * 100
+                color = self._get_color_for_percent(seg_percent)
+                self.itemconfig(seg, fill=color)
+            else:
+                self.itemconfig(seg, fill="#0a0a0a")
+    
+    def _get_color_for_percent(self, percent):
+        """Retorna cor baseada na porcentagem: verde (0%) → amarelo (50%) → vermelho (100%)"""
+        if percent <= 50:
+            # Verde para amarelo
+            ratio = percent / 50
+            r = int(255 * ratio)
+            g = 255
+            b = 0
+        else:
+            # Amarelo para vermelho
+            ratio = (percent - 50) / 50
+            r = 255
+            g = int(255 * (1 - ratio))
+            b = 0
+        
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+
 class PingApp:
     def __init__(self, root):
         self.root = root; root.title("Monitor de Ping"); root.geometry("700x340"); root.configure(bg="#000000")
         self.ips, self.titles, self.gauges = ["...", "...", "9.9.9.9"], ["Gateway Local", "Provedor", "Internet"], []
         self.q, self.mon = queue.Queue(), True
         
-        # Heurística #4 e #7: Menu Padrão e Atalhos
+        # Menu Padrão e Atalhos
         mb = tk.Menu(root)
         
         # Menu Arquivo
@@ -110,7 +200,7 @@ class PingApp:
         # Menu Ferramentas
         m_fer = tk.Menu(mb, tearoff=0)
         m_fer.add_command(label="Estatísticas Detalhadas", command=self.stats, accelerator="Ctrl+S")
-        m_fer.add_command(label="Zerar Dados", command=self.confirm_reset, accelerator="Ctrl+R") # Heurística #5
+        m_fer.add_command(label="Zerar Dados", command=self.confirm_reset, accelerator="Ctrl+R")
         m_fer.add_separator()
         m_fer.add_command(label="Configurar Sensibilidade...", command=self.open_config)
         mb.add_cascade(label="Ferramentas", menu=m_fer)
@@ -134,14 +224,16 @@ class PingApp:
         style = ttk.Style(); style.theme_use('clam'); 
         style.configure('D.TButton', background='#1a1a1a', foreground='#FFF', borderwidth=1)
         style.map('D.TButton', background=[('active', '#333')], foreground=[('active', '#FFF')])
-        style.configure('D.TLabel', background='#000000', foreground='#AAAAAA', font=('Arial', 9))
 
-        bf = ttk.Frame(root, style='D.TFrame'); bf.pack(fill='x', padx=10, pady=(0,10))
+        bf = tk.Frame(root, bg="#000000"); bf.pack(fill='x', padx=10, pady=(0,10))
         ttk.Button(bf, text="Stats", command=self.stats, style='D.TButton').pack(side=tk.LEFT, padx=5)
         ttk.Button(bf, text="Zerar", command=self.confirm_reset, style='D.TButton').pack(side=tk.LEFT, padx=5)
+        
+        # Substituir Label por Canvas customizado
+        self.sys_monitor = SystemMonitorCanvas(bf, width=400, height=24)
+        self.sys_monitor.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
         ttk.Button(bf, text="Sair", command=self.close, style='D.TButton').pack(side=tk.RIGHT, padx=5)
-        self.lbl_sys = ttk.Label(bf, text="CPU: --% | RAM: --%", style='D.TLabel', anchor="center")
-        self.lbl_sys.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
         root.protocol("WM_DELETE_WINDOW", self.close)
         threading.Thread(target=self.disc_gw, daemon=True).start()
@@ -149,7 +241,6 @@ class PingApp:
         self.update_ui(); self.update_sys()
 
     def confirm_reset(self):
-        # Heurística #5: Prevenção de erros
         if messagebox.askyesno("Confirmar", "Deseja realmente zerar todo o histórico?"):
             [g.reset() for g in self.gauges]
 
@@ -173,9 +264,14 @@ class PingApp:
     def update_sys(self):
         if not self.mon: return
         if HAS_PSUTIL:
-            try: self.lbl_sys.config(text=f"CPU: {psutil.cpu_percent(interval=None):.1f}%   |   RAM: {psutil.virtual_memory().percent:.1f}%")
+            try: 
+                cpu = psutil.cpu_percent(interval=None)
+                ram = psutil.virtual_memory().percent
+                self.sys_monitor.update_values(cpu, ram)
             except: pass
-        else: self.lbl_sys.config(text="Instale 'psutil'")
+        else: 
+            # Mostrar mensagem para instalar psutil
+            pass
         self.root.after(1000, self.update_sys)
 
     def disc_gw(self):
