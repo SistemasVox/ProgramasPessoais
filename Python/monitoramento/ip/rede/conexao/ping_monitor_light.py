@@ -1,37 +1,114 @@
 import tkinter as tk
 from tkinter import font, ttk, messagebox
-import threading, subprocess, re, ipaddress, math, time, platform, queue, random
+import threading
+import subprocess
+import re
+import ipaddress
+import math
+import time
+import platform
+import queue
+import random
 
-try: import psutil; HAS_PSUTIL = True
-except ImportError: HAS_PSUTIL = False
+# Tenta importar psutil, mas funciona sem ele
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+
+# --- Configurações Globais e Estilos ---
+COLORS = {
+    'bg': "#000000",
+    'fg': "#FFFFFF",
+    'scale_low': "#00FF00",    # Verde (bom)
+    'scale_med': "#FF9900",    # Laranja (atenção)
+    'scale_high': "#FF0000",   # Vermelho (ruim)
+    'led_st': "#00FF00",       # LED Estável
+    'led_unst': "#FF9900",     # LED Instável
+    'led_err': "#FF0000",      # LED Erro
+    'led_off_g': "#003300",
+    'led_off_o': "#331a00",
+    'panel_bg': "#1a1a1a"
+}
+
+CONFIG = {
+    'sample_size': 5,      # Tamanho da amostra para análise do LED
+    'min_ms_trigger': 5,   # Variação mínima em ms para considerar instável
+    'var_pct_trigger': 10.0, # Variação percentual para considerar instável
+    'history_size': 3600   # Histórico para estatísticas (segundos)
+}
 
 class PingGauge(tk.Canvas):
-    LED_CONF = {'min_ms': 5, 'var_pct': 10.0, 'sample': 5}
-    COLORS = {'st': "#00FF00", 'unst': "#FF9900", 'err': "#FF0000", 'off_g': "#003300", 'off_o': "#331a00"}
-
     def __init__(self, parent, title, max_scale=200, size=200, **kw):
-        super().__init__(parent, width=size, height=size, bg="#000000", highlightthickness=0, **kw)
-        self.size, self.center, self.radius, self.max_scale = size, size/2, size*0.38, max_scale
-        self.current_ping, self.ping_history, self.recent = None, [], []
-        self.min_ping, self.max_ping, self.cur_angle, self.anim_job, self.blink_job = 9999, 0, 225, None, None
+        super().__init__(parent, width=size, height=size, bg=COLORS['bg'], highlightthickness=0, **kw)
+        self.size = size
+        self.center = size / 2
+        self.radius = size * 0.38
+        self.max_scale = max_scale
         
-        f_sz = lambda s, w="normal": font.Font(family="Arial", size=int(size*s), weight=w)
-        self.fonts = {'val': f_sz(0.16,"bold"), 'unit': f_sz(0.06), 'sc': f_sz(0.045,"bold"), 'mm': f_sz(0.04), 'ti': f_sz(0.048,"bold"), 'ip': f_sz(0.038)}
+        # Dados
+        self.current_ping = None
+        self.ping_history = [] # Guarda os últimos 3600 pontos
+        self.recent = []       # Buffer recente para o LED
         
-        self.create_oval(self.center-(r:=self.radius+size*0.02), self.center-r, self.center+r, self.center+r, outline="#FFFFFF", width=int(size*0.008))
-        self._draw_scale()
-        self.create_oval(self.center-(cr:=size*0.015), self.center-cr, self.center+cr, self.center+cr, fill="#FFFFFF", outline="#CCCCCC", width=2)
-        self.needle = self._draw_ptr(225, "#00FF00")
+        # Estado interno
+        self.min_ping = 9999
+        self.max_ping = 0
+        self.cur_angle = 225
+        self.anim_job = None
+        self.blink_job = None
         
-        self.txt_val = self.create_text(self.center, self.center*1.3, text="---", fill="#FFFFFF", font=self.fonts['val'])
+        # Fontes
+        self._init_fonts(size)
+        
+        # Desenho estático
+        self._draw_static_elements()
+        
+        # Ponteiro
+        self.needle = self._draw_ptr(225, COLORS['scale_low'])
+        
+        # Textos
+        self.txt_val = self.create_text(self.center, self.center*1.3, text="---", fill=COLORS['fg'], font=self.fonts['val'])
         self.create_text(self.center, self.center*1.52, text="ms", fill="#AAAAAA", font=self.fonts['unit'])
         self.txt_min = self.create_text(self.center*0.3, size*1.03, text="Min\n---", fill="#AAAAAA", font=self.fonts['mm'], justify="center")
         self.txt_max = self.create_text(self.center*1.7, size*1.03, text="Max\n---", fill="#AAAAAA", font=self.fonts['mm'], justify="center")
         self.txt_ti = self.create_text(self.center, size*1.08, text=title, fill="#00BFFF", font=self.fonts['ti'], anchor="s")
         self.txt_ip = self.create_text(self.center, size*1.14, text="(...)", fill="#AAAAAA", font=self.fonts['ip'], anchor="s")
         
-        self.led = self.create_oval(self.center-(lr:=size*0.012), (ly:=size*0.99)-lr, self.center+lr, ly+lr, fill=self.COLORS['off_g'], outline="")
+        # LED
+        self.led = self._draw_led()
+
+    def _init_fonts(self, size):
+        def f(s, w="normal"): return font.Font(family="Arial", size=int(size*s), weight=w)
+        self.fonts = {
+            'val': f(0.16, "bold"),
+            'unit': f(0.06),
+            'sc': f(0.045, "bold"),
+            'mm': f(0.04),
+            'ti': f(0.048, "bold"),
+            'ip': f(0.038)
+        }
+
+    def _draw_static_elements(self):
+        # Aro externo
+        r = self.radius + self.size * 0.02
+        self.create_oval(self.center-r, self.center-r, self.center+r, self.center+r, outline=COLORS['fg'], width=int(self.size*0.008))
+        
+        # Escala
+        self._draw_scale()
+        
+        # Pino central
+        cr = self.size * 0.015
+        self.create_oval(self.center-cr, self.center-cr, self.center+cr, self.center+cr, fill=COLORS['fg'], outline="#CCCCCC", width=2)
+
+    def _draw_led(self):
+        lr = self.size * 0.012
+        ly = self.size * 0.99
+        # Moldura do LED
         self.create_oval(self.center-lr*1.5, ly-lr*1.5, self.center+lr*1.5, ly+lr*1.5, outline="#555555", width=1)
+        # Luz do LED
+        return self.create_oval(self.center-lr, ly-lr, self.center+lr, ly+lr, fill=COLORS['led_off_g'], outline="")
 
     def set_title(self, title, ip): 
         self.itemconfigure(self.txt_ti, text=title)
@@ -39,377 +116,468 @@ class PingGauge(tk.Canvas):
 
     def _draw_scale(self):
         for i in range(11):
-            ang, val = math.radians(225 - (i * 270 / 10)), int((i/10)*self.max_scale)
-            col = "#00FF00" if val<=20 else "#FF3333" if val>=self.max_scale*0.75 else "#FF9933" if val>=self.max_scale*0.5 else "#FFFFFF"
-            p = lambda r: (self.center + r * math.cos(ang), self.center - r * math.sin(ang))
-            self.create_line(*p(self.radius*0.85), *p(self.radius), fill=col, width=int(self.size*0.012))
-            self.create_text(*p(self.radius*0.7), text=str(val), fill=col, font=self.fonts['sc'])
+            # 225 graus é o início (esquerda embaixo), -270 é a varredura total
+            ang = math.radians(225 - (i * 270 / 10))
+            val = int((i/10) * self.max_scale)
+            
+            # Cor da escala
+            if val <= 20: col = COLORS['scale_low']
+            elif val >= self.max_scale * 0.75: col = COLORS['scale_high']
+            elif val >= self.max_scale * 0.5: col = COLORS['scale_med']
+            else: col = COLORS['fg']
+
+            # Linha principal (Tick grande)
+            p_out = (self.center + self.radius * math.cos(ang), self.center - self.radius * math.sin(ang))
+            p_in = (self.center + self.radius * 0.85 * math.cos(ang), self.center - self.radius * 0.85 * math.sin(ang))
+            self.create_line(*p_in, *p_out, fill=col, width=int(self.size*0.012))
+            
+            # Texto da escala
+            p_txt = (self.center + self.radius * 0.7 * math.cos(ang), self.center - self.radius * 0.7 * math.sin(ang))
+            self.create_text(*p_txt, text=str(val), fill=col, font=self.fonts['sc'])
+            
+            # Sub-divisões (Ticks pequenos)
             if i < 10:
                 for j in range(1, 5):
                     a_m = math.radians(225 - ((i + j/5) * 270 / 10))
-                    self.create_line(self.center+self.radius*0.92*math.cos(a_m), self.center-self.radius*0.92*math.sin(a_m),
-                                     self.center+self.radius*math.cos(a_m), self.center-self.radius*math.sin(a_m), fill=col, width=int(self.size*0.004))
+                    pm_out = (self.center + self.radius * math.cos(a_m), self.center - self.radius * math.sin(a_m))
+                    pm_in = (self.center + self.radius * 0.92 * math.cos(a_m), self.center - self.radius * 0.92 * math.sin(a_m))
+                    self.create_line(*pm_in, *pm_out, fill=col, width=int(self.size*0.004))
 
     def _draw_ptr(self, deg, color):
         rad = math.radians(deg)
-        pts = [(self.center + self.radius*0.75 * math.cos(rad), self.center - self.radius*0.75 * math.sin(rad)),
-               (self.center + self.size*0.02 * math.cos(rad+1.57), self.center - self.size*0.02 * math.sin(rad+1.57)),
-               (self.center - self.radius*0.15 * math.cos(rad), self.center + self.radius*0.15 * math.sin(rad)),
-               (self.center + self.size*0.02 * math.cos(rad-1.57), self.center - self.size*0.02 * math.sin(rad-1.57))]
-        return self.create_polygon(*[c for p in pts for c in p], fill=color, outline="#FFFFFF", width=1)
+        # Coordenadas do polígono da agulha
+        pts = [
+            (self.center + self.radius*0.75 * math.cos(rad), self.center - self.radius*0.75 * math.sin(rad)), # Ponta
+            (self.center + self.size*0.02 * math.cos(rad+1.57), self.center - self.size*0.02 * math.sin(rad+1.57)), # Lado 1
+            (self.center - self.radius*0.15 * math.cos(rad), self.center + self.radius*0.15 * math.sin(rad)), # Cauda
+            (self.center + self.size*0.02 * math.cos(rad-1.57), self.center - self.size*0.02 * math.sin(rad-1.57)) # Lado 2
+        ]
+        return self.create_polygon(*[c for p in pts for c in p], fill=color, outline=COLORS['fg'], width=1)
 
     def update_ping(self, val):
-        self.recent = (self.recent + [val])[-self.LED_CONF['sample']:]
+        # Atualiza lista recente para o LED (Sample Size)
+        self.recent.append(val)
+        if len(self.recent) > CONFIG['sample_size']:
+            self.recent.pop(0)
+            
+        target_angle = 225
+        needle_color = COLORS['scale_high']
+
         if val is not None:
-            self.ping_history = (self.ping_history + [val])[-3600:]
-            self.min_ping, self.max_ping = min(self.ping_history), max(self.ping_history)
+            # Atualiza histórico LONGO (para o botão Stats - 3600 segundos)
+            self.ping_history.append(val)
+            if len(self.ping_history) > CONFIG['history_size']: 
+                self.ping_history.pop(0)
+            
+            self.min_ping = min(self.min_ping, val)
+            self.max_ping = max(self.max_ping, val)
+            
             self.itemconfigure(self.txt_val, text=f"{val}")
             self.itemconfigure(self.txt_min, text=f"Min\n{self.min_ping}")
             self.itemconfigure(self.txt_max, text=f"Max\n{self.max_ping}")
-            tgt, col = 225 - (min(val, self.max_scale)/self.max_scale * 270), "#00FF00" if val < self.max_scale*0.3 else "#FFFF00" if val < self.max_scale*0.6 else "#FF3333"
+            
+            # Calcula ângulo
+            ratio = min(val, self.max_scale) / self.max_scale
+            target_angle = 225 - (ratio * 270)
+            
+            # Define cor baseada no valor instantâneo
+            if val < self.max_scale * 0.3: needle_color = COLORS['scale_low']
+            elif val < self.max_scale * 0.6: needle_color = COLORS['scale_med']
+            else: needle_color = COLORS['scale_high']
         else:
             self.itemconfigure(self.txt_val, text="Erro")
-            tgt, col = 225, "#FF0000"
-        self._anim(tgt, col)
-        self._blink(val)
+            
+        self._anim_needle(target_angle, needle_color)
+        self._update_led_logic(val)
 
-    def _anim(self, tgt, col):
+    def _anim_needle(self, target, color):
         if self.anim_job: 
             self.after_cancel(self.anim_job)
-        def step(cur):
-            if abs(tgt - cur) < 0.5:
+            
+        def step(current):
+            # Movimento suave
+            diff = target - current
+            if abs(diff) < 0.5:
                 self.delete(self.needle)
-                self.needle = self._draw_ptr(tgt, col)
-                self.cur_angle = tgt
+                self.needle = self._draw_ptr(target, color)
+                self.cur_angle = target
             else:
-                nxt = cur + (tgt - cur) * 0.1
+                next_angle = current + (diff * 0.15) # Velocidade da agulha
                 self.delete(self.needle)
-                self.needle = self._draw_ptr(nxt, col)
-                self.cur_angle = nxt
-                self.anim_job = self.after(20, lambda: step(nxt))
+                self.needle = self._draw_ptr(next_angle, color)
+                self.cur_angle = next_angle
+                self.anim_job = self.after(20, lambda: step(next_angle))
+                
         step(self.cur_angle)
 
-    def _blink(self, val):
+    def _update_led_logic(self, current_val):
+        """
+        Lógica Crítica do LED:
+        1. Erro atual (None) -> Vermelho
+        2. Histórico recente tem None -> Laranja (Instabilidade recente)
+        3. Variação alta (Jitter) -> Laranja (Variação >= 5ms E 10%)
+        4. Estável -> Verde
+        """
         if self.blink_job:
             self.after_cancel(self.blink_job)
-        v_s = [x for x in self.recent if x is not None]
-        conf = PingGauge.LED_CONF
-        is_err = val is None
-        is_unst = is_err or (len(v_s)>1 and (max(v_s)-min(v_s))>=conf['min_ms'] and ((max(v_s)-min(v_s))/min(v_s)*100)>conf['var_pct'])
-        c_on, c_off = (self.COLORS['err'], self.COLORS['err']) if is_err else (self.COLORS['unst'], self.COLORS['off_o']) if is_unst else (self.COLORS['st'], self.COLORS['off_g'])
-        if is_err:
+
+        valid_samples = [x for x in self.recent if x is not None]
+        
+        is_error_now = current_val is None
+        has_recent_drop = None in self.recent 
+        
+        is_jittery = False
+        if len(valid_samples) > 1:
+            v_min = min(valid_samples)
+            v_max = max(valid_samples)
+            diff_abs = v_max - v_min
+            diff_pct = (diff_abs / v_min * 100) if v_min > 0 else 0
+            
+            # Regra do usuário: >= 5ms E >= 10%
+            if diff_abs >= CONFIG['min_ms_trigger'] and diff_pct > CONFIG['var_pct_trigger']:
+                is_jittery = True
+
+        # Determinação da cor
+        if is_error_now:
+            color_on, color_off = COLORS['led_err'], COLORS['led_err']
+            mode = "error"
+        elif has_recent_drop or is_jittery:
+            color_on, color_off = COLORS['led_unst'], COLORS['led_off_o']
+            mode = "unstable"
+        else:
+            color_on, color_off = COLORS['led_st'], COLORS['led_off_g']
+            mode = "stable"
+
+        if mode == "error":
+            self.itemconfigure(self.led, fill=color_on)
+        else:
+            self._blink_led(0, mode, color_on, color_off)
+
+    def _blink_led(self, count, mode, c_on, c_off):
+        if mode == "stable":
             self.itemconfigure(self.led, fill=c_on)
+            # Efeito heartbeat sutil
+            if random.random() > 0.95:
+                 self.itemconfigure(self.led, fill=c_off)
+                 self.blink_job = self.after(100, lambda: self._blink_led(0, mode, c_on, c_off))
+            else:
+                 self.blink_job = self.after(200, lambda: self._blink_led(0, mode, c_on, c_off))
             return
-        def pulse(cnt, limit):
-            if cnt >= limit*2:
-                self.itemconfigure(self.led, fill=c_off)
-                return
-            self.itemconfigure(self.led, fill=c_on if cnt%2==0 else c_off)
-            t = random.randint(60, 120) if is_unst else random.randint(80, 150)
-            self.blink_job = self.after(t, lambda: pulse(cnt+1, limit))
-        pulse(0, random.randint(2, 4) if is_unst else random.randint(1, 3))
+
+        # Piscar instável
+        limit = random.randint(2, 6)
+        if count >= limit * 2:
+            self.itemconfigure(self.led, fill=c_off)
+            self.blink_job = self.after(random.randint(300, 800), lambda: self._blink_led(0, mode, c_on, c_off))
+            return
+
+        state = c_on if count % 2 == 0 else c_off
+        self.itemconfigure(self.led, fill=state)
+        delay = random.randint(50, 150)
+        self.blink_job = self.after(delay, lambda: self._blink_led(count + 1, mode, c_on, c_off))
 
     def reset(self):
-        self.min_ping, self.max_ping, self.ping_history, self.recent = 9999, 0, [], []
+        self.min_ping, self.max_ping = 9999, 0
+        self.ping_history, self.recent = [], []
         self.itemconfigure(self.txt_min, text="Min\n---")
         self.itemconfigure(self.txt_max, text="Max\n---")
-        self._anim(225, "#00FF00")
+        self._anim_needle(225, COLORS['scale_low'])
 
 
 class SystemMonitorCanvas(tk.Canvas):
     def __init__(self, parent, **kw):
-        super().__init__(parent, bg="#1a1a1a", highlightthickness=0, height=30, **kw)
+        super().__init__(parent, bg=COLORS['panel_bg'], highlightthickness=0, height=30, **kw)
         self.segment_width = 3
         self.segment_spacing = 2
-        self.cpu_bg = None
-        self.ram_bg = None
         self.cpu_segments = []
         self.ram_segments = []
-        self.cpu_text = None
-        self.ram_text = None
-        self.separator = None
         self.bind("<Configure>", self._on_resize)
         self.current_cpu = 0
         self.current_ram = 0
     
     def _on_resize(self, event=None):
-        width = self.winfo_width()
-        height = self.winfo_height()
-        
-        if width <= 1 or height <= 1:
-            return
-        
+        w, h = self.winfo_width(), self.winfo_height()
+        if w <= 1: return
         self.delete("all")
         
-        bar_height = 20
-        margin_y = (height - bar_height) // 2
-        text_space = 200
-        available_for_bars = width - text_space - 20
-        bar_width = max(80, int(available_for_bars / 2))
-        bar_width = min(bar_width, int(width * 0.35))
-        num_segments = max(10, (bar_width - 4) // (self.segment_width + self.segment_spacing))
-        margin_x = 5
+        bar_h = 20
+        margin_y = (h - bar_h) // 2
+        bar_w = min(int(w * 0.35), max(80, int((w - 220) / 2)))
         
-        self.cpu_bg = self.create_rectangle(margin_x, margin_y, margin_x + bar_width, margin_y + bar_height, 
-                                           fill="#0a0a0a", outline="#333333", width=1)
-        self.ram_bg = self.create_rectangle(width - margin_x - bar_width, margin_y, 
-                                           width - margin_x, margin_y + bar_height, 
-                                           fill="#0a0a0a", outline="#333333", width=1)
+        # Backgrounds
+        self.create_rectangle(5, margin_y, 5 + bar_w, margin_y + bar_h, fill="#0a0a0a", outline="#333")
+        self.create_rectangle(w - 5 - bar_w, margin_y, w - 5, margin_y + bar_h, fill="#0a0a0a", outline="#333")
         
-        self.cpu_segments = []
-        start_x = margin_x + 2
-        seg_margin_y = margin_y + 2
-        seg_height = bar_height - 4
+        # Texto
+        self.txt_cpu = self.create_text(5 + bar_w + 10, h//2, text="CPU: --%", fill="#AAA", font=("Arial", 9), anchor="w")
+        self.txt_ram = self.create_text(w - 5 - bar_w - 10, h//2, text="RAM: --%", fill="#AAA", font=("Arial", 9), anchor="e")
+        self.create_text(w//2, h//2, text="|", fill="#555", font=("Arial", 9))
         
-        for i in range(num_segments):
-            x = start_x + i * (self.segment_width + self.segment_spacing)
-            if x + self.segment_width > margin_x + bar_width - 2:
-                break
-            seg = self.create_rectangle(x, seg_margin_y, x + self.segment_width, 
-                                       seg_margin_y + seg_height, 
-                                       fill="#0a0a0a", outline="")
-            self.cpu_segments.append(seg)
+        # Recalcula segmentos
+        self.cpu_segments = self._create_segments(5 + 2, margin_y + 2, bar_w - 4, bar_h - 4, 1)
+        self.ram_segments = self._create_segments(w - 5 - 2, margin_y + 2, bar_w - 4, bar_h - 4, -1)
         
-        self.ram_segments = []
-        start_x_ram = width - margin_x - 2 - self.segment_width
-        
-        for i in range(num_segments):
-            x = start_x_ram - i * (self.segment_width + self.segment_spacing)
-            if x < width - margin_x - bar_width + 2:
-                break
-            seg = self.create_rectangle(x, seg_margin_y, x + self.segment_width, 
-                                       seg_margin_y + seg_height, 
-                                       fill="#0a0a0a", outline="")
-            self.ram_segments.append(seg)
-        
-        text_x_cpu = margin_x + bar_width + 10
-        text_x_ram = width - margin_x - bar_width - 10
-        
-        self.cpu_text = self.create_text(text_x_cpu, height//2, text="CPU: --%", fill="#AAAAAA", 
-                                         font=("Arial", 9), anchor="w")
-        self.ram_text = self.create_text(text_x_ram, height//2, text="RAM: --%", fill="#AAAAAA", 
-                                         font=("Arial", 9), anchor="e")
-        self.separator = self.create_text(width//2, height//2, text="|", fill="#555555", font=("Arial", 9))
-        
-        self._update_segments(self.current_cpu, self.current_ram)
-    
-    def update_values(self, cpu_percent, ram_percent):
-        self.current_cpu = cpu_percent
-        self.current_ram = ram_percent
-        
-        if self.cpu_text and self.ram_text:
-            self.itemconfig(self.cpu_text, text=f"CPU: {cpu_percent:.1f}%")
-            self.itemconfig(self.ram_text, text=f"RAM: {ram_percent:.1f}%")
-        
-        self._update_segments(cpu_percent, ram_percent)
-    
-    def _update_segments(self, cpu_percent, ram_percent):
-        num_cpu_segments = len(self.cpu_segments)
-        if num_cpu_segments > 0:
-            segments_to_fill_cpu = int((cpu_percent / 100) * num_cpu_segments)
-            for i, seg in enumerate(self.cpu_segments):
-                if i < segments_to_fill_cpu:
-                    seg_percent = ((i + 1) / num_cpu_segments) * 100
-                    color = self._get_color_for_percent(seg_percent)
-                    self.itemconfig(seg, fill=color)
+        self._update_visuals()
+
+    def _create_segments(self, start_x, start_y, width, height, direction):
+        segs = []
+        num = width // (self.segment_width + self.segment_spacing)
+        for i in range(int(num)):
+            x = start_x + (i * (self.segment_width + self.segment_spacing) * direction)
+            if direction == -1: x -= self.segment_width 
+            segs.append(self.create_rectangle(x, start_y, x + self.segment_width, start_y + height, fill="#0a0a0a", outline=""))
+        return segs
+
+    def update_values(self, cpu, ram):
+        self.current_cpu, self.current_ram = cpu, ram
+        if hasattr(self, 'txt_cpu'):
+            self.itemconfigure(self.txt_cpu, text=f"CPU: {cpu:.1f}%")
+            self.itemconfigure(self.txt_ram, text=f"RAM: {ram:.1f}%")
+            self._update_visuals()
+
+    def _update_visuals(self):
+        def fill_segs(segs, pct):
+            count = len(segs)
+            fill_idx = int((pct / 100) * count)
+            for i, s in enumerate(segs):
+                if i < fill_idx:
+                    ratio = (i / count)
+                    r = int(255 * (ratio * 2)) if ratio < 0.5 else 255
+                    g = 255 if ratio < 0.5 else int(255 * (2 - ratio * 2))
+                    col = f"#{min(255,max(0,r)):02x}{min(255,max(0,g)):02x}00"
+                    self.itemconfigure(s, fill=col)
                 else:
-                    self.itemconfig(seg, fill="#0a0a0a")
+                    self.itemconfigure(s, fill="#0a0a0a")
         
-        num_ram_segments = len(self.ram_segments)
-        if num_ram_segments > 0:
-            segments_to_fill_ram = int((ram_percent / 100) * num_ram_segments)
-            for i, seg in enumerate(self.ram_segments):
-                if i < segments_to_fill_ram:
-                    seg_percent = ((i + 1) / num_ram_segments) * 100
-                    color = self._get_color_for_percent(seg_percent)
-                    self.itemconfig(seg, fill=color)
-                else:
-                    self.itemconfig(seg, fill="#0a0a0a")
-    
-    def _get_color_for_percent(self, percent):
-        if percent <= 50:
-            ratio = percent / 50
-            r = int(255 * ratio)
-            g = 255
-            b = 0
-        else:
-            ratio = (percent - 50) / 50
-            r = 255
-            g = int(255 * (1 - ratio))
-            b = 0
-        return f"#{r:02x}{g:02x}{b:02x}"
+        fill_segs(self.cpu_segments, self.current_cpu)
+        fill_segs(self.ram_segments, self.current_ram)
 
 
 class PingApp:
     def __init__(self, root):
         self.root = root
-        root.title("Monitor de Ping")
-        root.geometry("700x340")
-        root.configure(bg="#000000")
+        root.title("Monitor de Ping Pro")
+        root.geometry("720x360")
+        root.configure(bg=COLORS['bg'])
+        
+        self.running = True
         self.ips = ["...", "...", "9.9.9.9"]
-        self.titles = ["Gateway Local", "Provedor", "Internet"]
-        self.gauges = []
-        self.q = queue.Queue()
-        self.mon = True
+        self.titles = ["Gateway", "Provedor", "Internet"]
+        self.queue = queue.Queue()
         
-        mb = tk.Menu(root)
-        m_arq = tk.Menu(mb, tearoff=0)
-        m_arq.add_command(label="Sair", command=self.close, accelerator="Ctrl+Q")
-        mb.add_cascade(label="Arquivo", menu=m_arq)
+        self._setup_menu()
+        self._setup_ui()
         
-        m_fer = tk.Menu(mb, tearoff=0)
-        m_fer.add_command(label="Estatísticas Detalhadas", command=self.stats, accelerator="Ctrl+S")
-        m_fer.add_command(label="Zerar Dados", command=self.confirm_reset, accelerator="Ctrl+R")
-        m_fer.add_separator()
-        m_fer.add_command(label="Configurar Sensibilidade...", command=self.open_config)
-        mb.add_cascade(label="Ferramentas", menu=m_fer)
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        threading.Thread(target=self._discovery_thread, daemon=True).start()
+        threading.Thread(target=self._ping_loop_thread, daemon=True).start()
         
-        m_aju = tk.Menu(mb, tearoff=0)
-        m_aju.add_command(label="Sobre", command=self.about)
-        mb.add_cascade(label="Ajuda", menu=m_aju)
-        root.config(menu=mb)
-        
-        root.bind("<Control-q>", lambda e: self.close())
-        root.bind("<Control-r>", lambda e: self.confirm_reset())
-        root.bind("<Control-s>", lambda e: self.stats())
+        self._process_queue()
+        self._update_sys_stats()
 
-        mf = tk.Frame(root, bg="#000000")
+    def _setup_menu(self):
+        mb = tk.Menu(self.root)
+        m_file = tk.Menu(mb, tearoff=0)
+        m_file.add_command(label="Sair", command=self.close)
+        mb.add_cascade(label="Arquivo", menu=m_file)
+        
+        m_tools = tk.Menu(mb, tearoff=0)
+        m_tools.add_command(label="Estatísticas Detalhadas", command=self.stats)
+        m_tools.add_command(label="Configurar Sensibilidade", command=self._open_config)
+        m_tools.add_command(label="Zerar Dados", command=self._reset_data)
+        mb.add_cascade(label="Ferramentas", menu=m_tools)
+        
+        self.root.config(menu=mb)
+
+    def _setup_ui(self):
+        mf = tk.Frame(self.root, bg=COLORS['bg'])
         mf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        self.gauges = []
         for t in self.titles:
             g = PingGauge(mf, title=t, size=220)
             g.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             self.gauges.append(g)
-
+            
+        bf = tk.Frame(self.root, bg=COLORS['bg'])
+        bf.pack(fill='x', padx=10, pady=(0, 10))
+        
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure('D.TButton', background='#1a1a1a', foreground='#FFF', borderwidth=1)
-        style.map('D.TButton', background=[('active', '#333')], foreground=[('active', '#FFF')])
-
-        bf = tk.Frame(root, bg="#000000")
-        bf.pack(fill='x', padx=10, pady=(0,10))
-        ttk.Button(bf, text="Stats", command=self.stats, style='D.TButton').pack(side=tk.LEFT, padx=5)
-        ttk.Button(bf, text="Zerar", command=self.confirm_reset, style='D.TButton').pack(side=tk.LEFT, padx=5)
+        style.configure('D.TButton', background='#333', foreground='white', borderwidth=1)
+        style.map('D.TButton', background=[('active', '#555')])
         
-        self.sys_monitor = SystemMonitorCanvas(bf)
-        self.sys_monitor.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        ttk.Button(bf, text="Stats", command=self.stats, style='D.TButton', width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="Reset", command=self._reset_data, style='D.TButton', width=6).pack(side=tk.LEFT, padx=2)
         
-        ttk.Button(bf, text="Sair", command=self.close, style='D.TButton').pack(side=tk.RIGHT, padx=5)
+        self.sys_mon = SystemMonitorCanvas(bf)
+        self.sys_mon.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10)
+        
+        ttk.Button(bf, text="Sair", command=self.close, style='D.TButton', width=6).pack(side=tk.RIGHT, padx=2)
 
-        root.protocol("WM_DELETE_WINDOW", self.close)
-        threading.Thread(target=self.disc_gw, daemon=True).start()
-        threading.Thread(target=self.loop, daemon=True).start()
-        self.update_ui()
-        self.update_sys()
-
-    def confirm_reset(self):
-        if messagebox.askyesno("Confirmar", "Deseja realmente zerar todo o histórico?"):
-            [g.reset() for g in self.gauges]
-
-    def open_config(self):
+    def stats(self):
+        """Mostra estatísticas baseadas nos últimos 3600 segundos de histórico"""
         w = tk.Toplevel(self.root)
-        w.title("Configurações")
-        w.configure(bg="#000000")
-        w.geometry("300x180")
-        ttk.Label(w, text="Variação Mínima (ms):", background="#000", foreground="#FFF").pack(pady=(15,5))
-        e_ms = ttk.Entry(w)
-        e_ms.pack()
-        e_ms.insert(0, str(PingGauge.LED_CONF['min_ms']))
-        ttk.Label(w, text="Variação Percentual (%):", background="#000", foreground="#FFF").pack(pady=(10,5))
-        e_pct = ttk.Entry(w)
-        e_pct.pack()
-        e_pct.insert(0, str(PingGauge.LED_CONF['var_pct']))
-        def save():
-            try:
-                ms, pct = int(e_ms.get()), float(e_pct.get())
-                PingGauge.LED_CONF.update({'min_ms': ms, 'var_pct': pct})
-                w.destroy()
-            except ValueError:
-                messagebox.showerror("Erro", "Use apenas números.", parent=w)
-        ttk.Button(w, text="Salvar", command=save, style='D.TButton').pack(pady=20)
+        w.title("Estatísticas (1h)")
+        w.configure(bg="black")
+        w.geometry("400x200")
+        
+        lbl_header = tk.Label(w, text="Resumo dos últimos 3600 pacotes", bg="black", fg="#00BFFF", font=("Arial", 10, "bold"))
+        lbl_header.pack(pady=10)
 
-    def about(self):
-        messagebox.showinfo("Sobre", "Monitor de Ping v1.0\n\nFerramenta de diagnóstico de rede com estilo automotivo.\nOtimizado para detecção de jitter e latência.")
+        for g, t in zip(self.gauges, self.titles):
+            h = g.ping_history
+            if h:
+                avg = sum(h) / len(h)
+                txt = f"{t}: Min={min(h)}ms | Méd={avg:.1f}ms | Max={max(h)}ms"
+            else:
+                txt = f"{t}: Sem dados suficientes"
+            
+            tk.Label(w, text=txt, bg="black", fg="white", font=("Arial", 9)).pack(pady=5, padx=10, anchor="w")
 
-    def update_sys(self):
-        if not self.mon:
-            return
+    def _ping_host(self, ip):
+        if ip in [None, "...", "Erro", "?"]:
+            return None
+            
+        param = '-n' if platform.system().lower() == 'windows' else '-c'
+        timeout = '1000'
+        
+        creationflags = 0
+        if platform.system().lower() == 'windows':
+            creationflags = 0x08000000 # CREATE_NO_WINDOW
+        
+        cmd = ['ping', param, '1', '-w' if platform.system().lower()=='windows' else '-W', timeout if platform.system().lower()=='windows' else '1', ip]
+        
+        try:
+            proc = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                creationflags=creationflags,
+                encoding='cp850' if platform.system()=='Windows' else 'utf-8'
+            )
+            out, _ = proc.communicate()
+            
+            if match := re.search(r'(?:tempo|time)[=<]([0-9]+)(?:ms)?', out, re.IGNORECASE):
+                return int(match.group(1))
+            return None
+        except Exception:
+            return None
+
+    def _ping_loop_thread(self):
+        while self.running:
+            results = []
+            for ip in self.ips:
+                results.append(self._ping_host(ip))
+            self.queue.put(results)
+            time.sleep(1)
+
+    def _process_queue(self):
+        try:
+            while True:
+                data = self.queue.get_nowait()
+                for g, val in zip(self.gauges, data):
+                    g.update_ping(val)
+        except queue.Empty:
+            pass
+        if self.running:
+            self.root.after(100, self._process_queue)
+
+    def _update_sys_stats(self):
         if HAS_PSUTIL:
-            try: 
+            try:
                 cpu = psutil.cpu_percent(interval=None)
                 ram = psutil.virtual_memory().percent
-                self.sys_monitor.update_values(cpu, ram)
-            except:
-                pass
-        self.root.after(1000, self.update_sys)
+                self.sys_mon.update_values(cpu, ram)
+            except: pass
+        if self.running:
+            self.root.after(1000, self._update_sys_stats)
 
-    def disc_gw(self):
+    def _discovery_thread(self):
         if platform.system() != "Windows":
-            self.ips = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
-            self.upd_titles()
+            self.ips = ["1.1.1.1", "9.9.9.9", "9.9.9.9"]
+            self._update_titles_safe()
             return
+
         try:
-            out = subprocess.check_output(["tracert", "-w", "100", "-h", "15", "9.9.9.9"], encoding='latin-1', creationflags=0x08000000)
+            target_ip = "9.9.9.9"
+            cmd = ["tracert", "-w", "100", "-h", "10", target_ip]
+            out = subprocess.check_output(cmd, encoding='cp850', creationflags=0x08000000)
+            
             hops = []
             for line in out.splitlines():
                 if m := re.search(r'(\d+\.\d+\.\d+\.\d+)', line):
-                    if m.group(1) != "9.9.9.9" and m.group(1) not in [h[0] for h in hops]:
-                        hops.append((m.group(1), line.split()[1] if '[' in line else ""))
-            types = [('L' if ipaddress.ip_address(ip).is_private and not str(ip).startswith("100.64") else 'C' if str(ip).startswith("100.64") else 'P') for ip, _ in hops]
-            gw = next((hops[i][0] for i in range(len(types)-1) if types[i]=='L' and types[i+1]!='L'), hops[0][0] if hops else "?")
-            prov = None
-            pubs = [(ip, nm) for (ip, nm), t in zip(hops, types) if t == 'P']
-            if pubs:
-                doms = [n.split('.')[-2:] for _, n in pubs if n]
-                if doms:
-                    prov = next((ip for ip, nm in pubs if '.'.join(doms[0]) in nm), None)
-                if not prov:
-                    prov = pubs[0][0]
-            self.ips = [gw, prov or (hops[-1][0] if hops else "?"), "9.9.9.9"]
-        except:
-            self.ips = ["Erro", "Erro", "9.9.9.9"]
-        self.root.after(0, self.upd_titles)
+                    ip = m.group(1)
+                    if ip != target_ip and ip not in [x[0] for x in hops]:
+                        name = line.split()[1] if '[' in line else ""
+                        hops.append((ip, name))
+            
+            if not hops: return
 
-    def upd_titles(self):
-        [g.set_title(t.split()[0], f"({ip})") for g, t, ip in zip(self.gauges, self.titles, self.ips)]
-    
-    def loop(self):
-        while self.mon:
-            res = []
-            for ip in self.ips:
-                if ip in ["...", "Erro", "?"]:
-                    res.append(None)
-                    continue
-                try:
-                    o = subprocess.check_output(['ping', '-n', '1', '-w', '1000', ip], creationflags=0x08000000, encoding='cp850')
-                    res.append(int(float(re.search(r'[=<]([0-9]+)ms', o).group(1))))
-                except:
-                    res.append(None)
-            self.q.put(res)
-            time.sleep(1)
+            gw = hops[0][0]
+            prov = "?"
+            
+            # Identificar IPs Públicos para selecionar o provedor correto
+            public_hops = []
+            for ip, _ in hops:
+                obj = ipaddress.ip_address(ip)
+                # Ignora privados, CGNAT (100.64) e o destino
+                if not obj.is_private and not str(ip).startswith("100.64") and ip != target_ip:
+                    public_hops.append(ip)
+            
+            if public_hops:
+                # Se houver mais de 1 IP público, o primeiro geralmente é o WAN do cliente (ex: .82)
+                # e o segundo é o gateway da operadora (ex: .81). Damos preferência ao segundo.
+                if len(public_hops) >= 2:
+                    prov = public_hops[1]
+                else:
+                    prov = public_hops[0]
+            
+            self.ips = [gw, prov, target_ip]
+            self._update_titles_safe()
+            
+        except Exception as e:
+            print(f"Erro discovery: {e}")
 
-    def update_ui(self):
-        try:
-            while True:
-                [g.update_ping(r) for g, r in zip(self.gauges, self.q.get_nowait())]
-        except queue.Empty:
-            pass
-        if self.mon:
-            self.root.after(100, self.update_ui)
+    def _update_titles_safe(self):
+        self.root.after(0, lambda: [g.set_title(t, f"({ip})") for g, t, ip in zip(self.gauges, self.titles, self.ips)])
 
-    def stats(self):
+    def _open_config(self):
         w = tk.Toplevel(self.root)
-        w.title("Stats")
-        w.configure(bg="#000")
-        for g, t in zip(self.gauges, self.titles):
-            h = g.ping_history
-            txt = f"{t}: Min={g.min_ping} Méd={sum(h)/len(h):.1f} Max={g.max_ping}" if h else f"{t}: ---"
-            ttk.Label(w, text=txt, background="#000", foreground="#FFF").pack(pady=5, padx=10)
+        w.title("Config")
+        w.configure(bg="black")
+        
+        def add_field(lbl, key):
+            f = tk.Frame(w, bg="black"); f.pack(pady=5)
+            tk.Label(f, text=lbl, bg="black", fg="white").pack(side=tk.LEFT)
+            e = ttk.Entry(f, width=5); e.pack(side=tk.LEFT)
+            e.insert(0, str(CONFIG[key]))
+            return e, key
+
+        fields = [
+            add_field("Min Var (ms):", 'min_ms_trigger'),
+            add_field("Min Var (%):", 'var_pct_trigger')
+        ]
+
+        def save():
+            try:
+                CONFIG['min_ms_trigger'] = int(fields[0][0].get())
+                CONFIG['var_pct_trigger'] = float(fields[1][0].get())
+                w.destroy()
+            except ValueError:
+                messagebox.showerror("Erro", "Use apenas números.")
+        
+        ttk.Button(w, text="Salvar", command=save).pack(pady=10)
+
+    def _reset_data(self):
+        if messagebox.askyesno("Confirmar", "Zerar gráficos e histórico?"):
+            for g in self.gauges: g.reset()
 
     def close(self):
-        self.mon = False
+        self.running = False
         self.root.destroy()
 
 if __name__ == "__main__":
-    r = tk.Tk()
-    PingApp(r)
-    r.mainloop()
+    root = tk.Tk()
+    app = PingApp(root)
+    root.mainloop()
