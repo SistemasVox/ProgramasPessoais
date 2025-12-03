@@ -110,7 +110,54 @@ gerar_megasena() {
     
     i=1
     while [ $i -le 3 ]; do
-        numeros=$(gerar_numeros 6 60)
+        tentativa=0
+        valido=0
+        
+        while [ $valido -eq 0 ] && [ $tentativa -lt 50 ]; do
+            numeros=$(gerar_numeros 6 60)
+            nums_sorted=$(echo "$numeros" | tr ' ' '\n' | sort -n)
+            
+            tem_sequencial=0
+            tem_mesma_dezena=0
+            tem_mesma_unidade=0
+            
+            anterior=""
+            for num in $nums_sorted; do
+                if [ -n "$anterior" ]; then
+                    if [ $((num - anterior)) -eq 1 ]; then
+                        tem_sequencial=1
+                    fi
+                fi
+                anterior=$num
+            done
+            
+            for num1 in $nums_sorted; do
+                dezena1=$((num1 / 10))
+                unidade1=$((num1 % 10))
+                
+                for num2 in $nums_sorted; do
+                    if [ $num1 -lt $num2 ]; then
+                        dezena2=$((num2 / 10))
+                        unidade2=$((num2 % 10))
+                        
+                        if [ $dezena1 -eq $dezena2 ]; then
+                            tem_mesma_dezena=1
+                        fi
+                        
+                        if [ $unidade1 -eq $unidade2 ]; then
+                            tem_mesma_unidade=1
+                        fi
+                    fi
+                done
+            done
+            
+            if [ $tem_sequencial -eq 1 ] && [ $tem_mesma_dezena -eq 1 ] && [ $tem_mesma_unidade -eq 1 ]; then
+                valido=1
+            fi
+            
+            tentativa=$((tentativa + 1))
+        done
+        
         echo "Jogo $i: $(formatar_linha "$numeros" 6)"
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
@@ -125,7 +172,54 @@ gerar_maismilionaria() {
     
     i=1
     while [ $i -le 3 ]; do
-        numeros=$(gerar_numeros 6 50)
+        tentativa=0
+        valido=0
+        
+        while [ $valido -eq 0 ] && [ $tentativa -lt 50 ]; do
+            numeros=$(gerar_numeros 6 50)
+            nums_sorted=$(echo "$numeros" | tr ' ' '\n' | sort -n)
+            
+            tem_sequencial=0
+            tem_mesma_dezena=0
+            tem_mesma_unidade=0
+            
+            anterior=""
+            for num in $nums_sorted; do
+                if [ -n "$anterior" ]; then
+                    if [ $((num - anterior)) -eq 1 ]; then
+                        tem_sequencial=1
+                    fi
+                fi
+                anterior=$num
+            done
+            
+            for num1 in $nums_sorted; do
+                dezena1=$((num1 / 10))
+                unidade1=$((num1 % 10))
+                
+                for num2 in $nums_sorted; do
+                    if [ $num1 -lt $num2 ]; then
+                        dezena2=$((num2 / 10))
+                        unidade2=$((num2 % 10))
+                        
+                        if [ $dezena1 -eq $dezena2 ]; then
+                            tem_mesma_dezena=1
+                        fi
+                        
+                        if [ $unidade1 -eq $unidade2 ]; then
+                            tem_mesma_unidade=1
+                        fi
+                    fi
+                done
+            done
+            
+            if [ $tem_sequencial -eq 1 ] && [ $tem_mesma_dezena -eq 1 ] && [ $tem_mesma_unidade -eq 1 ]; then
+                valido=1
+            fi
+            
+            tentativa=$((tentativa + 1))
+        done
+        
         trevo1=$((1 + $(rand_number 5)))
         trevo2=$((1 + $(rand_number 5)))
         while [ $trevo2 -eq $trevo1 ]; do
@@ -150,14 +244,78 @@ gerar_lotofacil() {
     echo "└────────────────────────────┘"
     echo ""
     
+    universo=""
+    i=1
+    while [ $i -le 25 ]; do
+        universo="$universo$i "
+        i=$((i + 1))
+    done
+    
+    universo_embaralhado=""
+    temp="$universo"
+    while [ -n "$temp" ]; do
+        count=$(echo "$temp" | wc -w)
+        [ $count -eq 0 ] && break
+        idx=$(($(rand_number $((count - 1))) + 1))
+        num=$(echo "$temp" | cut -d' ' -f$idx)
+        universo_embaralhado="$universo_embaralhado$num "
+        temp=$(echo "$temp" | sed "s/\<$num\> //g")
+    done
+    
+    count=0
+    ausentes=""
+    base_comum=""
+    pool=""
+    
+    for num in $universo_embaralhado; do
+        count=$((count + 1))
+        if [ $count -le 5 ]; then
+            ausentes="$ausentes$num "
+        elif [ $count -le 15 ]; then
+            base_comum="$base_comum$num "
+        else
+            pool="$pool$num "
+        fi
+    done
+    
     i=1
     while [ $i -le 3 ]; do
-        numeros=$(gerar_numeros 15 25)
+        unicos=""
+        temp_pool="$pool"
+        j=1
+        while [ $j -le 5 ] && [ -n "$temp_pool" ]; do
+            count=$(echo "$temp_pool" | wc -w)
+            [ $count -eq 0 ] && break
+            idx=$(($(rand_number $((count - 1))) + 1))
+            num=$(echo "$temp_pool" | cut -d' ' -f$idx)
+            unicos="$unicos$num "
+            temp_pool=$(echo "$temp_pool" | sed "s/\<$num\> //g")
+            j=$((j + 1))
+        done
+        
+        jogo=$(echo "$base_comum$unicos" | tr ' ' '\n' | grep -v '^$' | sort -n | tr '\n' ' ')
+        
         echo "Jogo $i:"
-        echo "   $(formatar_linha "$numeros" 8)"
+        count=0
+        linha=""
+        for num in $jogo; do
+            linha="$linha $(printf '%02d' $num)"
+            count=$((count + 1))
+            if [ $count -eq 5 ]; then
+                echo "   $linha"
+                linha=""
+                count=0
+            fi
+        done
+        
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
     done
+    
+    echo ""
+    echo "📊 Análise:"
+    echo "   • Números comuns (em todos): $(echo "$base_comum" | tr ' ' '\n' | grep -v '^$' | sort -n | tr '\n' ' ')"
+    echo "   • Números ausentes (em nenhum): $(echo "$ausentes" | tr ' ' '\n' | grep -v '^$' | sort -n | tr '\n' ' ')"
 }
 
 gerar_quina() {
@@ -168,7 +326,54 @@ gerar_quina() {
     
     i=1
     while [ $i -le 3 ]; do
-        numeros=$(gerar_numeros 5 80)
+        tentativa=0
+        valido=0
+        
+        while [ $valido -eq 0 ] && [ $tentativa -lt 50 ]; do
+            numeros=$(gerar_numeros 5 80)
+            nums_sorted=$(echo "$numeros" | tr ' ' '\n' | sort -n)
+            
+            tem_sequencial=0
+            tem_mesma_dezena=0
+            tem_mesma_unidade=0
+            
+            anterior=""
+            for num in $nums_sorted; do
+                if [ -n "$anterior" ]; then
+                    if [ $((num - anterior)) -eq 1 ]; then
+                        tem_sequencial=1
+                    fi
+                fi
+                anterior=$num
+            done
+            
+            for num1 in $nums_sorted; do
+                dezena1=$((num1 / 10))
+                unidade1=$((num1 % 10))
+                
+                for num2 in $nums_sorted; do
+                    if [ $num1 -lt $num2 ]; then
+                        dezena2=$((num2 / 10))
+                        unidade2=$((num2 % 10))
+                        
+                        if [ $dezena1 -eq $dezena2 ]; then
+                            tem_mesma_dezena=1
+                        fi
+                        
+                        if [ $unidade1 -eq $unidade2 ]; then
+                            tem_mesma_unidade=1
+                        fi
+                    fi
+                done
+            done
+            
+            if [ $tem_sequencial -eq 1 ] && [ $tem_mesma_dezena -eq 1 ] && [ $tem_mesma_unidade -eq 1 ]; then
+                valido=1
+            fi
+            
+            tentativa=$((tentativa + 1))
+        done
+        
         echo "Jogo $i: $(formatar_linha "$numeros" 5)"
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
@@ -199,7 +404,54 @@ gerar_duplasena() {
     
     i=1
     while [ $i -le 3 ]; do
-        numeros=$(gerar_numeros 6 50)
+        tentativa=0
+        valido=0
+        
+        while [ $valido -eq 0 ] && [ $tentativa -lt 50 ]; do
+            numeros=$(gerar_numeros 6 50)
+            nums_sorted=$(echo "$numeros" | tr ' ' '\n' | sort -n)
+            
+            tem_sequencial=0
+            tem_mesma_dezena=0
+            tem_mesma_unidade=0
+            
+            anterior=""
+            for num in $nums_sorted; do
+                if [ -n "$anterior" ]; then
+                    if [ $((num - anterior)) -eq 1 ]; then
+                        tem_sequencial=1
+                    fi
+                fi
+                anterior=$num
+            done
+            
+            for num1 in $nums_sorted; do
+                dezena1=$((num1 / 10))
+                unidade1=$((num1 % 10))
+                
+                for num2 in $nums_sorted; do
+                    if [ $num1 -lt $num2 ]; then
+                        dezena2=$((num2 / 10))
+                        unidade2=$((num2 % 10))
+                        
+                        if [ $dezena1 -eq $dezena2 ]; then
+                            tem_mesma_dezena=1
+                        fi
+                        
+                        if [ $unidade1 -eq $unidade2 ]; then
+                            tem_mesma_unidade=1
+                        fi
+                    fi
+                done
+            done
+            
+            if [ $tem_sequencial -eq 1 ] && [ $tem_mesma_dezena -eq 1 ] && [ $tem_mesma_unidade -eq 1 ]; then
+                valido=1
+            fi
+            
+            tentativa=$((tentativa + 1))
+        done
+        
         echo "Jogo $i: $(formatar_linha "$numeros" 6)"
         [ $i -lt 3 ] && echo ""
         i=$((i + 1))
@@ -214,7 +466,54 @@ gerar_diadesorte() {
     
     i=1
     while [ $i -le 3 ]; do
-        numeros=$(gerar_numeros 7 31)
+        tentativa=0
+        valido=0
+        
+        while [ $valido -eq 0 ] && [ $tentativa -lt 50 ]; do
+            numeros=$(gerar_numeros 7 31)
+            nums_sorted=$(echo "$numeros" | tr ' ' '\n' | sort -n)
+            
+            tem_sequencial=0
+            tem_mesma_dezena=0
+            tem_mesma_unidade=0
+            
+            anterior=""
+            for num in $nums_sorted; do
+                if [ -n "$anterior" ]; then
+                    if [ $((num - anterior)) -eq 1 ]; then
+                        tem_sequencial=1
+                    fi
+                fi
+                anterior=$num
+            done
+            
+            for num1 in $nums_sorted; do
+                dezena1=$((num1 / 10))
+                unidade1=$((num1 % 10))
+                
+                for num2 in $nums_sorted; do
+                    if [ $num1 -lt $num2 ]; then
+                        dezena2=$((num2 / 10))
+                        unidade2=$((num2 % 10))
+                        
+                        if [ $dezena1 -eq $dezena2 ]; then
+                            tem_mesma_dezena=1
+                        fi
+                        
+                        if [ $unidade1 -eq $unidade2 ]; then
+                            tem_mesma_unidade=1
+                        fi
+                    fi
+                done
+            done
+            
+            if [ $tem_sequencial -eq 1 ] && [ $tem_mesma_dezena -eq 1 ] && [ $tem_mesma_unidade -eq 1 ]; then
+                valido=1
+            fi
+            
+            tentativa=$((tentativa + 1))
+        done
+        
         mes_numero=$((1 + $(rand_number 11)))
         
         case $mes_numero in
@@ -246,17 +545,34 @@ gerar_supersete() {
     echo ""
     
     i=1
-    while [ $i -le 3 ]; do
-        col1=$(rand_number 9)
-        col2=$(rand_number 9)
-        col3=$(rand_number 9)
-        col4=$(rand_number 9)
-        col5=$(rand_number 9)
-        col6=$(rand_number 9)
-        col7=$(rand_number 9)
+    while [ "$i" -le 3 ]; do
+        # Gera 4 ou 5 algarismos únicos de uma vez (com seed diferente)
+        qtd=$((4 + $(awk -v seed="$$$(date +%N 2>/dev/null || echo $i)" 'BEGIN{srand(seed); print int(rand()*2)}')))
         
-        echo "Jogo $i: $col1 $col2 $col3 $col4 $col5 $col6 $col7"
-        [ $i -lt 3 ] && echo ""
+        # Gera lista de algarismos únicos (usa seed baseado em PID + contador)
+        algarismos=$(awk -v n="$qtd" -v seed="$$${i}$(date +%N 2>/dev/null || echo $$)" 'BEGIN{
+            srand(seed)
+            while(count < n) {
+                num = int(rand()*10)
+                if(!(num in seen)) {
+                    seen[num] = 1
+                    printf "%d ", num
+                    count++
+                }
+            }
+        }')
+        
+        # Gera as 7 colunas (seed único por jogo)
+        jogo=$(echo "$algarismos" | awk -v seed="$$${i}9$(date +%N 2>/dev/null || echo $$)" '{
+            srand(seed)
+            for(j=1; j<=7; j++) {
+                printf "%d", $(int(rand()*NF)+1)
+                if(j<7) printf " "
+            }
+        }')
+        
+        echo "Jogo $i: $jogo"
+        [ "$i" -lt 3 ] && echo ""
         i=$((i + 1))
     done
 }
