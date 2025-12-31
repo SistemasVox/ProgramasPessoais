@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
+import winsound  # Para tocar sons no Windows
 
 # Configurações
 masterserver_host = "ms.cubers.net"
@@ -64,12 +65,11 @@ def get_server_list(retries=3):
     # Parâmetros do cliente oficial AssaultCube 1.3.0.2
     params = {
         'action': 'list',
-        'name': 'AssaultCube',  # Nome do nosso cliente
-        'version': '1302',      # Versão do protocolo (AC 1.3.0.2)
-        'build': '0'            # Build
+        'name': 'AssaultCube',
+        'version': '1302',
+        'build': '0'
     }
     
-    # Construir URL com parâmetros
     base_url = f"http://{masterserver_host}/retrieve.do"
     query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
     url = f"{base_url}?{query_string}"
@@ -78,14 +78,11 @@ def get_server_list(retries=3):
     
     for attempt in range(retries):
         try:
-            # Fazer requisição HTTP como o cliente oficial
             req = urllib.request.Request(url)
             req.add_header('User-Agent', 'AssaultCube/1.3.0.2')
-            
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = response.read().decode('utf-8')
                 return data
-                
         except urllib.error.HTTPError as e:
             last_error = f"HTTP Error {e.code} na tentativa {attempt + 1}/{retries}: {e.reason}"
             if attempt < retries - 1:
@@ -187,7 +184,7 @@ class AssaultCubeMonitor:
     def __init__(self, root):
         self.root = root
         self.root.title("AssaultCube - Monitor de Servidores")
-        self.root.geometry("1000x700")
+        self.root.geometry("960x720")
         self.root.resizable(True, True)
         
         # Tema Cyberpunk
@@ -195,9 +192,16 @@ class AssaultCubeMonitor:
         
         self.monitoring = False
         self.monitor_thread = None
-        self.notification_history = set()
+        
+        # Histórico rastreia tempo para detectar reinício
+        self.notification_history = {}  # {server_key: last_time}
+        
+        # Modo de notificação: False = Normal (padrão), True = Prioridade Máxima
+        self.priority_notification_mode = tk.BooleanVar(value=False)
         
         self.setup_ui()
+        # Centralizar janela principal ao iniciar
+        self.center_main_window()
     
     def setup_cyberpunk_theme(self):
         """Configura o tema cyberpunk"""
@@ -209,268 +213,329 @@ class AssaultCubeMonitor:
         self.accent_purple = "#bd00ff"  # Roxo neon
         self.accent_yellow = "#ffff00"  # Amarelo neon
         self.accent_green = "#00ff41"  # Verde neon
-        self.text_color = "#e0e0e0"  # Texto claro
-        self.highlight_bg = "#2d1b69"  # Roxo escuro para destaque
+        
+        self.text_color = "#e0e0e0"
+        self.highlight_bg = "#2a2f4a"
         
         # Configurar estilo
         style = ttk.Style()
         style.theme_use('clam')
         
-        # Configurar cores do tema
-        self.root.configure(bg=self.bg_dark)
-        
-        # LabelFrame
-        style.configure('TLabelframe', 
-                       background=self.bg_dark,
-                       bordercolor=self.accent_cyan,
-                       borderwidth=2)
-        style.configure('TLabelframe.Label',
-                       background=self.bg_dark,
-                       foreground=self.accent_cyan,
-                       font=('Consolas', 10, 'bold'))
-        
-        # Labels
-        style.configure('TLabel',
-                       background=self.bg_dark,
-                       foreground=self.text_color,
-                       font=('Consolas', 9))
-        
-        # Entry
-        style.configure('TEntry',
-                       fieldbackground=self.bg_medium,
-                       foreground=self.accent_cyan,
-                       bordercolor=self.accent_purple,
-                       borderwidth=2)
-        
-        # Buttons
-        style.configure('TButton',
+        # Treeview
+        style.configure("Cyber.Treeview",
                        background=self.bg_medium,
+                       foreground=self.text_color,
+                       fieldbackground=self.bg_medium,
+                       borderwidth=0)
+        style.map('Cyber.Treeview', background=[('selected', self.accent_purple)])
+        
+        # Treeview heading
+        style.configure("Cyber.Treeview.Heading",
+                       background=self.bg_dark,
                        foreground=self.accent_cyan,
-                       bordercolor=self.accent_magenta,
-                       borderwidth=2,
-                       font=('Consolas', 9, 'bold'))
-        style.map('TButton',
-                 background=[('active', self.accent_purple)],
-                 foreground=[('active', '#ffffff')])
+                       borderwidth=1,
+                       relief='flat')
+        style.map("Cyber.Treeview.Heading",
+                 background=[('active', self.accent_purple)])
         
-        # Frame
-        style.configure('TFrame',
-                       background=self.bg_dark)
-        
+        self.root.configure(bg=self.bg_dark)
+    
     def setup_ui(self):
         """Configura a interface"""
+        # Frame superior - Configurações
+        config_frame = tk.Frame(self.root, bg=self.bg_dark, pady=10)
+        config_frame.pack(fill=tk.X, padx=10)
         
-        # Frame de configurações
-        config_frame = ttk.LabelFrame(self.root, text="⚙️ CONFIGURAÇÕES DO SISTEMA", padding=10)
-        config_frame.pack(fill=tk.X, padx=10, pady=5)
+        # Título
+        title = tk.Label(config_frame, text="⚡ ASSAULTCUBE SERVER MONITOR ⚡",
+                        font=('Consolas', 16, 'bold'),
+                        bg=self.bg_dark, fg=self.accent_cyan)
+        title.pack(pady=5)
         
-        # Linha 1: Mínimo de jogadores
-        ttk.Label(config_frame, text="Mínimo de jogadores:").grid(row=0, column=0, sticky=tk.W, padx=5)
-        self.min_players_var = tk.StringVar(value=str(DEFAULT_MIN_PLAYERS))
-        entry1 = ttk.Entry(config_frame, textvariable=self.min_players_var, width=10,
-                          font=('Consolas', 10, 'bold'))
-        entry1.grid(row=0, column=1, padx=5)
+        # Configurações em grid
+        settings_frame = tk.Frame(config_frame, bg=self.bg_dark)
+        settings_frame.pack(pady=10)
         
-        # Linha 1: Mapas favoritos
-        ttk.Label(config_frame, text="Mapas favoritos (separados por vírgula):").grid(row=0, column=2, sticky=tk.W, padx=20)
-        self.favorite_maps_var = tk.StringVar(value=DEFAULT_FAVORITE_MAPS)
-        entry2 = ttk.Entry(config_frame, textvariable=self.favorite_maps_var, width=30,
-                          font=('Consolas', 10, 'bold'))
-        entry2.grid(row=0, column=3, padx=5)
+        # Mapas favoritos
+        tk.Label(settings_frame, text="Mapas Favoritos:",
+                font=('Consolas', 10), bg=self.bg_dark, fg=self.accent_magenta).grid(row=0, column=0, sticky='w', padx=5)
+        self.fav_maps_entry = tk.Entry(settings_frame, width=40, font=('Consolas', 10),
+                                       bg=self.bg_medium, fg=self.text_color,
+                                       insertbackground=self.accent_cyan)
+        self.fav_maps_entry.insert(0, DEFAULT_FAVORITE_MAPS)
+        self.fav_maps_entry.grid(row=0, column=1, padx=5)
         
-        # Linha 2: Intervalo
-        ttk.Label(config_frame, text="Intervalo (segundos):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.interval_var = tk.StringVar(value=str(DEFAULT_CHECK_INTERVAL))
-        entry3 = ttk.Entry(config_frame, textvariable=self.interval_var, width=10,
-                          font=('Consolas', 10, 'bold'))
-        entry3.grid(row=1, column=1, padx=5, pady=5)
+        # Jogadores mínimos
+        tk.Label(settings_frame, text="Jogadores Mínimos:",
+                font=('Consolas', 10), bg=self.bg_dark, fg=self.accent_magenta).grid(row=1, column=0, sticky='w', padx=5, pady=5)
+        self.min_players_entry = tk.Entry(settings_frame, width=10, font=('Consolas', 10),
+                                         bg=self.bg_medium, fg=self.text_color,
+                                         insertbackground=self.accent_cyan)
+        self.min_players_entry.insert(0, str(DEFAULT_MIN_PLAYERS))
+        self.min_players_entry.grid(row=1, column=1, sticky='w', padx=5, pady=5)
+        
+        # Intervalo de verificação
+        tk.Label(settings_frame, text="Intervalo (segundos):",
+                font=('Consolas', 10), bg=self.bg_dark, fg=self.accent_magenta).grid(row=2, column=0, sticky='w', padx=5)
+        self.interval_entry = tk.Entry(settings_frame, width=10, font=('Consolas', 10),
+                                      bg=self.bg_medium, fg=self.text_color,
+                                      insertbackground=self.accent_cyan)
+        self.interval_entry.insert(0, str(DEFAULT_CHECK_INTERVAL))
+        self.interval_entry.grid(row=2, column=1, sticky='w', padx=5)
+        
+        # Checkbox para modo de notificação
+        priority_frame = tk.Frame(settings_frame, bg=self.bg_dark)
+        priority_frame.grid(row=3, column=0, columnspan=2, pady=10, sticky='w', padx=5)
+        
+        self.priority_check = tk.Checkbutton(
+            priority_frame,
+            text="🔔 Notificações com PRIORIDADE MÁXIMA",
+            variable=self.priority_notification_mode,
+            font=('Consolas', 10, 'bold'),
+            bg=self.bg_dark,
+            fg=self.accent_yellow,
+            selectcolor=self.bg_medium,
+            activebackground=self.bg_dark,
+            activeforeground=self.accent_green,
+            cursor='hand2'
+        )
+        self.priority_check.pack(anchor='w')
+        
+        # Descrição dos modos
+        desc_frame = tk.Frame(priority_frame, bg=self.bg_dark)
+        desc_frame.pack(anchor='w', padx=20, pady=5)
+        
+        tk.Label(desc_frame, 
+                text="✓ LIGADO: Pop-up aparece SEMPRE, mesmo em tela cheia",
+                font=('Consolas', 8),
+                bg=self.bg_dark,
+                fg=self.accent_green).pack(anchor='w')
+        
+        tk.Label(desc_frame, 
+                text="✗ DESLIGADO: Pop-up normal + janela pisca + som característico",
+                font=('Consolas', 8),
+                bg=self.bg_dark,
+                fg=self.accent_cyan).pack(anchor='w')
         
         # Botões de controle
-        button_frame = ttk.Frame(self.root)
-        button_frame.pack(fill=tk.X, padx=10, pady=5)
+        button_frame = tk.Frame(config_frame, bg=self.bg_dark, pady=10)
+        button_frame.pack()
         
-        self.start_button = ttk.Button(button_frame, text="▶️ INICIAR MONITOR", command=self.start_monitoring)
-        self.start_button.pack(side=tk.LEFT, padx=5)
+        self.start_btn = tk.Button(button_frame, text="▶ INICIAR MONITORAMENTO",
+                                   command=self.toggle_monitoring,
+                                   font=('Consolas', 11, 'bold'),
+                                   bg=self.accent_green, fg=self.bg_dark,
+                                   activebackground=self.accent_cyan,
+                                   borderwidth=0, padx=20, pady=10,
+                                   cursor='hand2')
+        self.start_btn.pack(side=tk.LEFT, padx=5)
         
-        self.stop_button = ttk.Button(button_frame, text="⏹️ PARAR MONITOR", command=self.stop_monitoring, state=tk.DISABLED)
-        self.stop_button.pack(side=tk.LEFT, padx=5)
+        self.search_btn = tk.Button(button_frame, text="🔍 BUSCAR AGORA",
+                                    command=self.single_search,
+                                    font=('Consolas', 11, 'bold'),
+                                    bg=self.accent_purple, fg='#ffffff',
+                                    activebackground=self.accent_magenta,
+                                    borderwidth=0, padx=20, pady=10,
+                                    cursor='hand2')
+        self.search_btn.pack(side=tk.LEFT, padx=5)
         
-        ttk.Button(button_frame, text="🔍 BUSCAR AGORA", command=self.single_search).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="🗑️ LIMPAR LOG", command=self.clear_log).pack(side=tk.LEFT, padx=5)
+        self.exit_btn = tk.Button(button_frame, text="❌ SAIR",
+                                  command=self.exit_application,
+                                  font=('Consolas', 11, 'bold'),
+                                  bg='#ff3333', fg='#ffffff',
+                                  activebackground='#cc0000',
+                                  activeforeground='#ffffff',
+                                  borderwidth=0, padx=30, pady=10,
+                                  cursor='hand2')
+        self.exit_btn.pack(side=tk.LEFT, padx=5)
         
-        # Status com estilo cyberpunk
-        self.status_var = tk.StringVar(value="⏸️ AGUARDANDO...")
-        status_label = tk.Label(button_frame, textvariable=self.status_var, 
-                               font=('Consolas', 10, 'bold'),
-                               bg=self.bg_dark, fg=self.accent_yellow,
-                               padx=10, pady=5)
-        status_label.pack(side=tk.RIGHT, padx=10)
-        
-        # Frame da tabela de servidores
-        table_frame = ttk.LabelFrame(self.root, text="🎮 SERVIDORES ATIVOS", padding=5)
+        # Frame para a tabela de servidores
+        table_frame = tk.Frame(self.root, bg=self.bg_dark)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Scrollbar para a tabela
+        # Label de servidores
+        tk.Label(table_frame, text="SERVIDORES ATIVOS:",
+                font=('Consolas', 12, 'bold'),
+                bg=self.bg_dark, fg=self.accent_magenta).pack(anchor='w', pady=5)
+        
+        # Treeview com scrollbar
         tree_scroll = ttk.Scrollbar(table_frame)
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Treeview para exibir servidores
-        columns = ("Jogadores", "Mapa", "Modo", "Tempo", "Descrição", "IP:Porta")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show='tree headings', 
-                                 yscrollcommand=tree_scroll.set, height=15)
+        self.tree = ttk.Treeview(table_frame, style="Cyber.Treeview",
+                                yscrollcommand=tree_scroll.set,
+                                selectmode='browse')
+        
         tree_scroll.config(command=self.tree.yview)
         
-        # Configurar colunas (proporções para responsividade)
+        # Definir colunas
+        self.tree['columns'] = ('Players', 'Map', 'Mode', 'Time', 'Description', 'Address')
+        
         self.tree.column("#0", width=30, minwidth=30, stretch=False)
-        self.tree.column("Jogadores", width=90, minwidth=70, anchor=tk.CENTER)
-        self.tree.column("Mapa", width=150, minwidth=100)
-        self.tree.column("Modo", width=80, minwidth=60, anchor=tk.CENTER)
-        self.tree.column("Tempo", width=70, minwidth=60, anchor=tk.CENTER)
-        self.tree.column("Descrição", width=300, minwidth=150)
-        self.tree.column("IP:Porta", width=150, minwidth=120)
+        self.tree.column("Players", width=80, minwidth=80)
+        self.tree.column("Map", width=120, minwidth=100)
+        self.tree.column("Mode", width=80, minwidth=80)
+        self.tree.column("Time", width=80, minwidth=80)
+        self.tree.column("Description", width=250, minwidth=200)
+        self.tree.column("Address", width=150, minwidth=150)
         
-        # Cabeçalhos
         self.tree.heading("#0", text="⭐")
-        self.tree.heading("Jogadores", text="JOGADORES")
-        self.tree.heading("Mapa", text="MAPA")
-        self.tree.heading("Modo", text="MODO")
-        self.tree.heading("Tempo", text="TEMPO")
-        self.tree.heading("Descrição", text="DESCRIÇÃO")
-        self.tree.heading("IP:Porta", text="IP:PORTA")
-        
-        # Estilo Cyberpunk para Treeview
-        style = ttk.Style()
-        style.configure("Treeview",
-                       background=self.bg_medium,
-                       foreground=self.text_color,
-                       fieldbackground=self.bg_medium,
-                       borderwidth=0,
-                       font=('Consolas', 9))
-        style.configure("Treeview.Heading",
-                       background=self.bg_dark,
-                       foreground=self.accent_cyan,
-                       borderwidth=2,
-                       relief="flat",
-                       font=('Consolas', 9, 'bold'))
-        style.map('Treeview.Heading',
-                 background=[('active', self.accent_purple)])
-        style.map('Treeview',
-                 background=[('selected', self.accent_purple)],
-                 foreground=[('selected', '#ffffff')])
+        self.tree.heading("Players", text="JOGADORES")
+        self.tree.heading("Map", text="MAPA")
+        self.tree.heading("Mode", text="MODO")
+        self.tree.heading("Time", text="TEMPO")
+        self.tree.heading("Description", text="DESCRIÇÃO")
+        self.tree.heading("Address", text="IP:PORTA")
         
         self.tree.pack(fill=tk.BOTH, expand=True)
         
-        # Bind para copiar IP ao clicar duas vezes
-        self.tree.bind("<Double-1>", self.on_server_double_click)
+        # Bind duplo clique
+        self.tree.bind('<Double-1>', self.on_server_double_click)
         
         # Frame de log
-        log_frame = ttk.LabelFrame(self.root, text="📋 LOG DO SISTEMA", padding=5)
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        log_frame = tk.Frame(self.root, bg=self.bg_dark)
+        log_frame.pack(fill=tk.BOTH, padx=10, pady=5)
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD, 
-                                                   font=('Consolas', 9),
-                                                   bg=self.bg_medium,
-                                                   fg=self.text_color,
-                                                   insertbackground=self.accent_cyan,
-                                                   selectbackground=self.accent_purple,
-                                                   selectforeground='#ffffff',
-                                                   borderwidth=0,
-                                                   highlightthickness=2,
-                                                   highlightbackground=self.accent_cyan,
-                                                   highlightcolor=self.accent_magenta)
+        tk.Label(log_frame, text="LOG DE ATIVIDADES:",
+                font=('Consolas', 10, 'bold'),
+                bg=self.bg_dark, fg=self.accent_cyan).pack(anchor='w')
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=6,
+                                                  font=('Consolas', 9),
+                                                  bg=self.bg_medium, fg=self.text_color,
+                                                  insertbackground=self.accent_cyan,
+                                                  wrap=tk.WORD)
         self.log_text.pack(fill=tk.BOTH, expand=True)
         
-        # Configurar tags de cores para o log (cores cyberpunk)
-        self.log_text.tag_config("info", foreground=self.accent_cyan)
-        self.log_text.tag_config("success", foreground=self.accent_green)
-        self.log_text.tag_config("warning", foreground=self.accent_yellow)
-        self.log_text.tag_config("error", foreground="#ff0055")
-        self.log_text.tag_config("highlight", foreground=self.accent_magenta, font=('Consolas', 9, 'bold'))
+        # Tags para cores no log
+        self.log_text.tag_config('success', foreground=self.accent_green)
+        self.log_text.tag_config('error', foreground=self.accent_magenta)
+        self.log_text.tag_config('highlight', foreground=self.accent_yellow)
         
-        self.log("╔══════════════════════════════════════════════════════════════════╗", "info")
-        self.log("║  BEM-VINDO AO MONITOR DE SERVIDORES ASSAULTCUBE [CYBERPUNK]     ║", "highlight")
-        self.log("╚══════════════════════════════════════════════════════════════════╝", "info")
-        self.log(">>> Configure os parâmetros e clique em 'INICIAR MONITOR'", "success")
+        self.log("Sistema iniciado. Configure e clique em INICIAR MONITORAMENTO.", "success")
+    
+    def center_main_window(self):
+        """Centraliza a janela principal na tela"""
+        self.root.update_idletasks()
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        self.root.geometry(f'{width}x{height}+{x}+{y}')
+    
+    def center_child(self, child_window, width=None, height=None):
+        """Centraliza uma janela filha em relação ao root (ou à tela)"""
+        child_window.update_idletasks()
         
-    def log(self, message, tag="info"):
+        if width is None:
+            width = child_window.winfo_width()
+        if height is None:
+            height = child_window.winfo_height()
+        
+        # Tenta centralizar em relação ao root se ele estiver visível
+        try:
+            parent_state = self.root.state()
+            parent_visible = parent_state in ('normal', 'zoomed') and self.root.winfo_viewable()
+            
+            if parent_visible:
+                parent_x = self.root.winfo_x()
+                parent_y = self.root.winfo_y()
+                parent_width = self.root.winfo_width()
+                parent_height = self.root.winfo_height()
+                
+                x = parent_x + (parent_width // 2) - (width // 2)
+                y = parent_y + (parent_height // 2) - (height // 2)
+            else:
+                # Centraliza na tela
+                x = (child_window.winfo_screenwidth() // 2) - (width // 2)
+                y = (child_window.winfo_screenheight() // 2) - (height // 2)
+        except:
+            # Fallback: centralizar na tela
+            x = (child_window.winfo_screenwidth() // 2) - (width // 2)
+            y = (child_window.winfo_screenheight() // 2) - (height // 2)
+        
+        child_window.geometry(f'{width}x{height}+{x}+{y}')
+    
+    def log(self, message, tag=None):
         """Adiciona mensagem ao log"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n", tag)
+        log_message = f"[{timestamp}] {message}\n"
+        
+        self.log_text.insert(tk.END, log_message, tag)
         self.log_text.see(tk.END)
-        
-    def clear_log(self):
-        """Limpa o log"""
-        self.log_text.delete(1.0, tk.END)
-        self.log("Log limpo.", "info")
-        
-    def get_favorite_maps(self):
-        """Retorna lista de mapas favoritos"""
-        maps = self.favorite_maps_var.get().strip()
-        return [m.strip().lower() for m in maps.split(',') if m.strip()]
     
     def is_map_favorite(self, map_name):
-        """Verifica se o mapa é favorito"""
+        """Verifica se o mapa está na lista de favoritos (busca parcial)"""
+        favorites = [m.strip().lower() for m in self.fav_maps_entry.get().split(',')]
         map_lower = map_name.lower()
-        return any(fav in map_lower for fav in self.get_favorite_maps())
+        
+        # Verifica se algum favorito está contido no nome do mapa
+        # Ex: "casa" encontra "ac_casa", "ac_casa_2", etc.
+        for fav in favorites:
+            if fav in map_lower:
+                return True
+        return False
+    
+    def toggle_monitoring(self):
+        """Inicia ou para o monitoramento"""
+        if not self.monitoring:
+            self.start_monitoring()
+        else:
+            self.stop_monitoring()
     
     def start_monitoring(self):
-        """Inicia o monitoramento"""
-        if not self.monitoring:
-            self.monitoring = True
-            self.start_button.config(state=tk.DISABLED)
-            self.stop_button.config(state=tk.NORMAL)
-            self.status_var.set("▶️ MONITORANDO...")
-            
-            self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
-            self.monitor_thread.start()
-            
-            self.log(">>> MONITOR INICIADO! <<<", "success")
+        """Inicia o monitoramento contínuo"""
+        try:
+            interval = int(self.interval_entry.get())
+            if interval < 10:
+                messagebox.showwarning("Aviso", "Intervalo mínimo é 10 segundos")
+                return
+        except ValueError:
+            messagebox.showerror("Erro", "Intervalo inválido")
+            return
+        
+        self.monitoring = True
+        self.start_btn.config(text="⏸ PARAR MONITORAMENTO", bg=self.accent_magenta)
+        self.log("Monitoramento iniciado!", "success")
+        
+        self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
+        self.monitor_thread.start()
     
     def stop_monitoring(self):
         """Para o monitoramento"""
-        if self.monitoring:
-            self.monitoring = False
-            self.start_button.config(state=tk.NORMAL)
-            self.stop_button.config(state=tk.DISABLED)
-            self.status_var.set("⏹️ PARADO")
-            
-            self.log(">>> Monitor parado <<<", "warning")
+        self.monitoring = False
+        self.start_btn.config(text="▶ INICIAR MONITORAMENTO", bg=self.accent_green)
+        self.log("Monitoramento parado.", "error")
     
     def monitor_loop(self):
         """Loop principal de monitoramento"""
         while self.monitoring:
             self.search_servers()
             
-            if self.monitoring:
-                try:
-                    interval = int(self.interval_var.get())
-                except:
-                    interval = DEFAULT_CHECK_INTERVAL
-                
-                for i in range(interval):
-                    if not self.monitoring:
-                        break
-                    time.sleep(1)
+            interval = int(self.interval_entry.get())
+            for _ in range(interval):
+                if not self.monitoring:
+                    break
+                time.sleep(1)
     
     def search_servers(self):
-        """Busca e atualiza lista de servidores"""
-        self.log(">>> Buscando servidores...", "info")
+        """Busca servidores ativos"""
+        self.log("Buscando servidores...")
         
         response = get_server_list()
         if not response:
-            self.log("❌ Erro ao conectar ao masterserver após múltiplas tentativas!", "error")
-            self.log("💡 Dica: Verifique sua conexão de internet", "warning")
+            self.log("Erro ao obter lista de servidores", "error")
             return
         
         servers = parse_response(response)
-        self.log(f"Encontrados {len(servers)} servidores no masterserver", "info")
+        self.log(f"Consultando {len(servers)} servidores...")
         
+        # Obter jogadores mínimos
         try:
-            min_players = int(self.min_players_var.get())
-        except:
+            min_players = int(self.min_players_entry.get())
+        except ValueError:
             min_players = DEFAULT_MIN_PLAYERS
         
-        # Consultar servidores em paralelo (MUITO MAIS RÁPIDO!)
         active_servers = query_servers_parallel(servers)
         
         # Filtrar apenas servidores com jogadores
@@ -494,12 +559,30 @@ class AssaultCubeMonitor:
             is_fav = self.is_map_favorite(info['map'])
             ip_port = f"{info['ip']}:{info['port']}"
             
-            # Verificar se deve notificar
+            # Verificar se deve notificar (com detecção de reinício)
             if is_fav and info['players'] >= min_players:
                 server_key = f"{info['ip']}:{info['port']}:{info['map']}"
+                current_time = info['minutes_remaining']
+                
+                # Verificar se é um novo jogo ou se a partida reiniciou
+                should_notify = False
+                
                 if server_key not in self.notification_history:
+                    # Primeira vez que vemos este servidor com este mapa
+                    should_notify = True
+                    self.log(f"🆕 Novo mapa favorito detectado: {info['map']}", "highlight")
+                else:
+                    # Verificar se o tempo aumentou (partida reiniciou)
+                    last_time = self.notification_history[server_key]
+                    if current_time > last_time:
+                        should_notify = True
+                        self.log(f"🔄 Partida reiniciou em {info['map']} (tempo: {last_time}→{current_time}min)", "highlight")
+                
+                if should_notify:
                     self.show_notification(info)
-                    self.notification_history.add(server_key)
+                
+                # Atualizar o tempo no histórico
+                self.notification_history[server_key] = current_time
             
             star = "⭐" if is_fav else ""
             
@@ -536,13 +619,72 @@ class AssaultCubeMonitor:
         
         # Limpar histórico se muito grande
         if len(self.notification_history) > 100:
-            self.notification_history.clear()
+            # Manter apenas os 50 mais recentes
+            items = list(self.notification_history.items())
+            self.notification_history = dict(items[-50:])
+            self.log("Histórico de notificações reduzido", "highlight")
     
     def single_search(self):
         """Faz uma busca única"""
-        self.searching_once = True
         thread = threading.Thread(target=self.search_servers, daemon=True)
         thread.start()
+    
+    def exit_application(self):
+        """Fecha a aplicação com confirmação"""
+        if self.monitoring:
+            # Se está monitorando, confirmar antes de sair
+            response = messagebox.askyesno(
+                "Confirmar Saída",
+                "O monitoramento está ativo.\n\nDeseja realmente sair?",
+                icon='warning'
+            )
+            if not response:
+                return
+        
+        self.log("Encerrando aplicação...", "error")
+        self.monitoring = False
+        self.root.quit()
+        self.root.destroy()
+    
+    def play_notification_sound(self):
+        """Toca um som característico de notificação (3 beeps em sequência)"""
+        def play_sound():
+            try:
+                # Som característico: 3 beeps curtos em frequências diferentes
+                # Representa: "AC Monitor Alert!"
+                frequencies = [800, 1000, 1200]  # Hz
+                for freq in frequencies:
+                    winsound.Beep(freq, 150)  # 150ms cada beep
+                    time.sleep(0.05)  # Pequena pausa entre beeps
+            except Exception as e:
+                # Fallback: usar bell do sistema se Beep falhar
+                self.root.bell()
+                time.sleep(0.2)
+                self.root.bell()
+                time.sleep(0.2)
+                self.root.bell()
+        
+        # Tocar som em thread separada para não bloquear
+        sound_thread = threading.Thread(target=play_sound, daemon=True)
+        sound_thread.start()
+    
+    def flash_main_window(self, duration=5):
+        """Faz a janela principal piscar por alguns segundos"""
+        def flash():
+            end_time = time.time() + duration
+            while time.time() < end_time:
+                try:
+                    # Alterna entre normal e destacado
+                    self.root.attributes('-topmost', True)
+                    time.sleep(0.3)
+                    self.root.attributes('-topmost', False)
+                    time.sleep(0.3)
+                except:
+                    break
+        
+        # Executar flash em thread separada
+        flash_thread = threading.Thread(target=flash, daemon=True)
+        flash_thread.start()
         
     def show_notification(self, info):
         """Exibe notificação de mapa favorito"""
@@ -551,6 +693,7 @@ class AssaultCubeMonitor:
         msg += f"Mapa: {info['map']}\n"
         msg += f"Modo: {info['mode']}\n"
         msg += f"Jogadores: {info['players']}/{info['max_players']}\n"
+        msg += f"Tempo: {info['minutes_remaining']} minutos\n"
         msg += f"IP:Porta: {info['ip']}:{info['port']}\n\n"
         msg += f"Copie o IP:Porta acima para conectar!"
         
@@ -560,21 +703,47 @@ class AssaultCubeMonitor:
         self.root.after(0, lambda: self.create_notification_window(msg, info))
     
     def create_notification_window(self, message, info):
-        """Cria janela de notificação"""
+        """Cria janela de notificação com comportamento baseado no modo selecionado"""
         notif = tk.Toplevel(self.root)
         notif.title("⭐ MAPA FAVORITO DETECTADO!")
-        notif.geometry("450x280")
+        notif.geometry("450x300")
         notif.resizable(False, False)
         notif.configure(bg=self.bg_dark)
         
-        # Centralizar janela
-        notif.transient(self.root)
-        notif.grab_set()
+        # Verificar modo de notificação
+        use_priority = self.priority_notification_mode.get()
+        
+        if use_priority:
+            # PRIORIDADE MÁXIMA: Pop-up sempre visível, mesmo em tela cheia
+            notif.attributes('-topmost', True)
+            notif.lift()
+            try:
+                notif.focus_force()
+            except:
+                pass
+            # Manter topmost permanente no modo prioritário
+            # (não remover depois de um tempo)
+        else:
+            # PRIORIDADE NORMAL: Pop-up normal + janela pisca + som característico
+            notif.lift()
+            
+            # Fazer a janela principal piscar
+            self.flash_main_window(duration=5)
+            
+            # Tocar som característico
+            self.play_notification_sound()
         
         # Header com efeito neon
-        header = tk.Label(notif, text="⚡ SERVIDOR FAVORITO ENCONTRADO ⚡",
-                         font=('Consolas', 12, 'bold'),
-                         bg=self.bg_dark, fg=self.accent_magenta,
+        header_text = "⚡ SERVIDOR FAVORITO ENCONTRADO ⚡"
+        if use_priority:
+            header_text += " [🔴 PRIORIDADE MÁXIMA]"
+        else:
+            header_text += " [🔵 PRIORIDADE NORMAL]"
+        
+        header = tk.Label(notif, text=header_text,
+                         font=('Consolas', 11, 'bold'),
+                         bg=self.bg_dark, 
+                         fg=self.accent_magenta if use_priority else self.accent_cyan,
                          pady=10)
         header.pack(fill=tk.X)
         
@@ -582,7 +751,7 @@ class AssaultCubeMonitor:
         text_frame = tk.Frame(notif, bg=self.bg_medium, padx=20, pady=20)
         text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        text_widget = tk.Text(text_frame, wrap=tk.WORD, height=8, font=('Consolas', 10),
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, height=9, font=('Consolas', 10),
                              bg=self.bg_medium, fg=self.text_color,
                              borderwidth=0, highlightthickness=0)
         text_widget.pack(fill=tk.BOTH, expand=True)
@@ -604,7 +773,7 @@ class AssaultCubeMonitor:
             confirm.title("✅ Copiado!")
             confirm.geometry("300x100")
             confirm.configure(bg=self.bg_dark)
-            confirm.transient(notif)
+            confirm.attributes('-topmost', True)
             
             tk.Label(confirm, text="✅ IP:PORTA COPIADO!",
                     font=('Consolas', 11, 'bold'),
@@ -614,6 +783,7 @@ class AssaultCubeMonitor:
                     font=('Consolas', 10),
                     bg=self.bg_dark, fg=self.accent_cyan).pack()
             
+            self.center_child(confirm, width=300, height=100)
             confirm.after(2000, confirm.destroy)
         
         copy_btn = tk.Button(button_frame, text="📋 COPIAR IP:PORTA", command=copy_address,
@@ -634,8 +804,8 @@ class AssaultCubeMonitor:
                           cursor='hand2')
         ok_btn.pack(side=tk.RIGHT, padx=10)
         
-        # Som de alerta (beep do sistema)
-        notif.bell()
+        # Centraliza a notificação
+        self.center_child(notif, width=450, height=300)
     
     def on_server_double_click(self, event):
         """Copia IP:Porta ao clicar duas vezes"""
